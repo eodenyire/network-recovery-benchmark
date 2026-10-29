@@ -1,0 +1,12 @@
+{
+  "config": {
+    "time_steps": 250,
+    "noise_level": 0.1,
+    "network_density": 2,
+    "t_df": 5.0,
+    "num_replications": 3
+  },
+  "lag_1_autocorr": 0.9261982950297822,
+  "lag_5_autocorr": 0.8176326736402357,
+  "decay_rate": 0.11721639087484381
+}

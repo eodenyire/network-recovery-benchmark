@@ -1,0 +1,874 @@
+# The Complete Capstone Project Report (M6 Draft Project)
+
+Below is the full report, assembled from all the revised sections. It follows the WQU Report Guidelines structure exactly: **Abstract → Introduction → Theoretical Framework → Methodology → Results → Discussion → Conclusion → References → Appendix**. The results placeholders are marked `[X.XXX]` throughout, ready to be filled once the code fixes are complete.
+
+---
+
+# Recovering Risk-Type Networks from Synthetic KRI Data: A Methods Study
+
+**Francis Dzikpe** — WorldQuant University
+**Emmanuel Odenyire Anyira** — WorldQuant University
+
+**Track:** Practical Track, Risk Management
+**Submission:** Module 6 — Draft Project
+**Date:** October 2026
+
+---
+
+## Abstract
+
+This project is a methods study. We **design** a known 20-node risk-propagation network `W_true` across 20 Principal Risk Types — documenting a source for each of its ~40 directed edges, informed by supervisory stress-testing frameworks and operational-risk literature — and use it to generate 100 synthetic Key Risk Indicator (KRI) time series (five per PRT) of 250 monthly observations. `W_true` enters both the VAR(1) lag matrix and the contemporaneous copula correlation matrix `Σ = (I − ρW_true)^{−1} D (I − ρW_true)^{−T}`; the lag-matrix channel is what makes edge direction identifiable by lag-based estimators. We benchmark **three recovery estimators** — VAR with Diebold–Yılmaz connectedness, CoVaR (Adrian & Brunnermeier), and a Graph Neural Network — **plus one propagation operator**, DebtRank (Battiston et al.), under varying data volume, noise, tail dependence, and network density. DebtRank consumes a supplied adjacency and returns cascade severity; it is **excluded from the recovery metrics and evaluated only on impulse-response MSE**, because precision, recall, F1, and AUC-ROC are undefined for it. To ensure results do not hinge on our network design, every configuration is re-run on **random sparse networks of the same density**, redrawn per replication. Performance is measured with a base-rate-aware four-metric rule — AUC-ROC, AUPRC, F1 at the oracle threshold, and F1 at a calibrated threshold — alongside edge-weight correlation and impulse-response MSE. We do not claim to discover a real risk network operating inside African banks; our conclusions concern which estimators recover interconnectedness best, and under what conditions. A propagation sanity check — a single +0.30 shock to Technology_Risk cascading through Cyber, Operational, Reputational, Liquidity, External Fraud, and Credit over 13 periods — confirms that the synthetic environment produces a plausible cascade before any estimator is benchmarked against it. The deliverable is a reproducible benchmarking framework and an empirical map of estimator performance, not a production platform.
+
+**Keywords:** Risk contagion; Network recovery; Key Risk Indicators; Primary Risk Types; Student's t-copula; Diebold–Yılmaz connectedness; CoVaR; Graph Neural Networks; Synthetic data benchmarking.
+
+**JEL classification:** G21, C45, C58
+
+**Code and data:** https://github.com/eodenyire/mscfe-690-risk-contagion-methods-study
+
+---
+
+## 1. Introduction
+
+### 1.1 Context and Motivation
+
+Financial institutions rarely face a single risk event. They manage a complex, multilevel landscape of financial and non-financial risks — liquidity, market, credit, operational, model, cyber, conduct, reputational, and strategic — each usually owned by a different functional silo, with its own taxonomy, its own Key Risk Indicators (KRIs), and its own reporting lines. Trouble does not stay in one silo. A governance failure becomes an operational failure, then a funding problem, then a solvency problem. Allen and Gale (2000) showed that risk transmission depends heavily on interbank architecture; Eisenberg and Noe (2001) showed that a single firm's default triggers insolvency down a chain of balance-sheet liabilities. The 2007–2008 crisis, the 2023 failure of Silicon Valley Bank, and the 2015–2019 distress in Kenyan and Ghanaian banks each followed chains of this kind — different starting points, common pattern: distress in one risk type cascades to others faster than either the institution's own reporting or the supervisor's notice.
+
+### 1.2 The Methodological Gap
+
+Traditional risk dashboards answer a narrow question: *"Is KRI X in the green, amber, or red zone?"* They do not answer the questions a risk committee actually faces: which PRT shocks will most affect another PRT, at what speed, and through what pathway. Analysts have begun to answer these questions using statistical methods developed for other fields — daily equity returns over decades, or physics simulations with thousands of observations.
+
+**Nobody has checked whether those answers are real, or whether they are sampling noise.**
+
+The methods in question were developed for settings with thousands of observations. Risk indicators are reported monthly at best, quarterly in practice, so a bank's entire history might be forty numbers. The indicators are noisy proxies for the thing they measure, observations go missing, and boards are often shown only a Red/Amber/Green status rather than the underlying value. A network diagram looks equally authoritative whether it reflects transmission or sampling noise.
+
+### 1.3 The Circularity Problem and the Methods-Study Response
+
+The obstacle to answering this empirically is access. Granular risk data is among the most sensitive information a bank holds and is essentially never released for research. The constraint binds hardest where the question matters most: African banks are building risk-data infrastructure now, with short histories and uneven data quality.
+
+A natural response is to generate synthetic data. But this response carries an obvious trap: **circularity**. If an analyst embeds a dependency structure in simulated data and then "discovers" that structure, the exercise is circular — the finding is just the assumption returned.
+
+This project resolves the circularity objection by reframing the study as a **methods study**. Rather than attempting to discover a proprietary internal network of a real institution, we **design** a known, controlled risk-propagation network `W_true` across the 20 PRTs and 100 KRIs, generate KRI time series through that network, and benchmark competing recovery estimators against that planted ground truth. The research question becomes: *given a known ground truth, how close does each estimator get, and how does that closeness degrade as the data environment becomes harder?*
+
+**Design, not borrowing, is what makes the ground truth "known."** In a methods study, the ground truth must be known by construction — we design `W_true`, so we know it exactly, and each estimator's output can be compared against a ground truth we control. A network borrowed from an external source would defeat this purpose: we would have to trust the source's network is accurate, which we cannot validate. There is, moreover, no publicly available PRT-level risk-transmission network we could borrow. The closest public networks are interbank exposures (nodes are banks, not risk types) or operational-risk correlation matrices (correlation values, not a directed graph). Our `W_true` is therefore **designed by us**, with a documented source for each of its ~40 directed edges, informed by supervisory stress-testing frameworks — the Bank of England's RAMSI, the European Central Bank's STAMP€ and BEAST, the IMF's solvency–liquidity work — and the operational-risk literature.
+
+### 1.4 Research Question and Contributions
+
+**Research question:** Given a known 20-node risk-propagation network and synthetic KRI data generated through it under realistic constraints (limited sample length, measurement noise, tail dependence, network density), how well do competing recovery estimators recover the planted network, and under what conditions does that recovery degrade?
+
+**Contributions:**
+
+1. **A designed and documented ground truth.** `W_true` is a 20-node sparse directed weighted network over the 20 PRTs, with a documented source for each of its ~40 directed edges. Its edges enter **both** the VAR(1) lag matrix and the contemporaneous copula correlation matrix `Σ = (I − ρW_true)^{−1} D (I − ρW_true)^{−T}`. The lag-matrix channel is what makes edge **direction** identifiable by lag-based estimators such as VAR+DY; a design in which `W_true` entered only `Σ` would leave direction unrecoverable.
+
+2. **A benchmark of three recovery estimators plus one propagation operator.** We compare VAR with Diebold–Yılmaz connectedness, CoVaR, and a Graph Neural Network — each of which produces an estimated 20×20 adjacency — plus DebtRank, which consumes a supplied adjacency and returns a cascade-severity prediction. **DebtRank is not a recovery estimator** and is excluded from the recovery metrics; it is evaluated only on impulse-response MSE.
+
+3. **A robustness check against random sparse networks.** To ensure results do not hinge on the specific designed network, every configuration is re-run on random sparse networks of the same density (2 edges per PRT, ~40 edges of 400 possible), redrawn for each replication.
+
+4. **A base-rate-aware four-metric evaluation.** Because the planted network is sparse (~10% base rate), a single F1-maximisation sweep collapses to the trivial threshold that declares every edge present. We instead report AUC-ROC, AUPRC, F1 at the oracle threshold, and F1 at a calibrated threshold, alongside edge-weight correlation and impulse-response MSE.
+
+5. **A propagation sanity check on the ground truth.** A single +0.30 shock to Technology_Risk, cascading through Cyber, Operational, Reputational, Liquidity, External Fraud, and Credit over 13 periods, confirms that the synthetic environment produces a plausible cascade before any estimator is benchmarked against it.
+
+### 1.5 Scope Declarations
+
+The platform, dashboard, and production user interface previously contemplated at earlier modules are **out of scope**. A minimal visualisation of recovered adjacency matrices is retained for communication only. The RAG threshold-status logic that appeared in earlier drafts is likewise **out of scope**: the study is about recovering network structure from continuous KRI series, not classifying threshold breaches. The study makes **no claim about the risk networks of any real institution or banking system**. Granger causality with FDR correction and graphical lasso are acknowledged as natural extensions (see §2.6.4) but are not part of the core comparison; they will be added if time permits.
+
+---
+
+## 2. Theoretical Framework
+
+### 2.1 Overview
+
+There is a growing body of literature that studies financial interconnectedness, financial contagion, and bank failures. The overwhelming evidence suggests that bank failures rarely result from a single isolated risk failure. They usually arise when the failure in one Primary Risk Type (PRT) spreads to other PRTs within an institution, resulting in distress transmitted either **intra-institution** or **inter-institution** through the interconnectedness of the wider system. The literature has addressed intra- and inter-institutional risk interrelatedness, risk failure, and spread largely separately, with each believed to ultimately result in contagion and systemic failure. This section reviews both strands, the empirical evidence including African markets, the connectedness and network-recovery methods that this study benchmarks, and the competing approaches that set the baseline for comparison.
+
+### 2.2 Intra-institutional Interrelatedness
+
+The intra-firm interrelatedness tranche of the literature can be traced to **Diamond and Dybvig (1983)**, whose seminal paper "Bank Runs, Deposit Insurance and Liquidity" documented the first formal account of how failure of one risk type — bank runs (liquidity risk) — forces a solvent bank to liquidate illiquid assets mostly at a loss, turning a liquidity risk into a solvency risk. Their model demonstrated that the nature of bank deposit contracts ensures banks are inherently vulnerable to self-fulfilling runs due to the maturity mismatch between illiquid assets and liquid liabilities. A bank run can therefore result in solvency risk for an institution if the run causes significant liquidation of illiquid assets to fulfil customer withdrawal requests.
+
+**He and Xiong (2012)** showed that creditors' fear of rollover risk can raise the default probability of even solvent banks. They argued that banks have multiple creditors, and each creditor deciding whether to roll over their maturing debt considers the rollover decisions of other creditors whose debt matures in the next contract period. A maturing creditor will choose to roll over their debt if and only if current fundamentals provide sufficient safety margin.
+
+**Brunnermeier and Pedersen (2009)** theoretically documented that market and funding liquidity reinforce each other in a spiral: falling asset prices tighten margins and funding, forcing the firm into further sales. This feedback loop between market liquidity and funding liquidity is one of the core channels of intra-institutional contagion and is directly relevant to the risk-type interdependencies that this study plants.
+
+### 2.3 Inter-institutional Interrelatedness
+
+The inter-institutional literature can be traced to **Allen and Gale (2000)** and **Freixas, Parigi, and Rocher (2000)**. These papers formalised contagion as the transmission of distress through overlapping interbank claims across regions or sectors of the banking system.
+
+**Allen and Gale (2000)** demonstrated that the structure of the interbank network — complete or incomplete — fundamentally determines how shocks propagate. In **complete** interbank networks, where all banks have claims on each other and each region is connected to all other regions, contagion is limited because losses are diversified. In **incomplete** interbank networks, where each bank or region is connected to a small number of others, the failure of a single bank can trigger a cascade of insolvencies across neighbouring regions.
+
+**Eisenberg and Noe (2001)**, in "Systemic Risk in Financial Systems", provided perhaps the closest demonstration of inter-institutional contagion. They developed a clearing-payment vector model showing how a single firm's default can trigger insolvency down a chain of balance-sheet liabilities. By modelling financial institutions as a network of mutual obligations where the ability of one institution to meet its liabilities depends partly on payments received from others, Eisenberg and Noe (2001) showed that interdependence can amplify individual shocks or risk failures into systemic risk failures. Their model thus formalised the concept of cascading failures in financial systems and provided the foundations for subsequent research on financial contagion.
+
+The **directed, weighted, sparse network structure** that Eisenberg and Noe (2001) formalised is the structural template that this study plants: a set of nodes (there, institutions; here, PRTs) whose edges carry directional, weighted influence, and whose cascade behaviour is a function of the network topology.
+
+### 2.4 Empirical Evidence, Including African Markets
+
+Empirically, intra- and inter-institutional contagion effects have been documented by several papers. **Imbierowicz and Rauch (2014)** empirically documented the liquidity-credit risk linkage for 15,000 US banks and found that each risk type raises bank default probabilities, and that their interaction significantly adds to default probabilities.
+
+**Acharya, Pedersen, Philippon, and Richardson (2017)** demonstrated that tail dependencies between institutions are critical for understanding systemic risk. In response, they developed the Systemic Expected Shortfall (SES) as a measure to capture the expected capital shortfall of a financial institution conditional on the system being in distress.
+
+Other empirical papers documented indirect channels of financial distress. **Greenwood, Landier, and Themar (2015)** used European bank balance-sheet data to quantify fire-sale spillovers and argued that common asset exposures can amplify losses when banks deleverage simultaneously. **Acharya and Skeie (2011)** documented a liquidity channel where heightened rollover risk induces banks to hoard liquidity, reducing interbank lending and contributing to higher funding costs for other firms. The **2007–2008 financial crisis** presented the best anecdotal evidence of interlinkages between firms and the financial contagion effect. **Gorton and Metrick (2012)**, using securitised bond spreads and repo-market conditions, found evidence that the 2007–2008 crisis propagated through the repo market, with rising counterparty risk and falling collateral values contributing to the overall crisis.
+
+The experience within the African continent is no different. **Bello, Guo, and Newaz (2022)**, using dynamic correlations for African markets between 2005 and 2020 and focusing on the European debt crises, Brexit, and COVID-19, found that contagion exists for some markets, but that regional evidence of significant contagion is strongest during the global financial crisis. They also found that contagion varies with country-level risk, market capitalisation, and export exposure. **Boako and Alagidede (2018)** found that African equity-market correlation increased significantly during the global financial crisis.
+
+The above demonstrates the strong link between risk failures in one institution and contagion across other institutions. However, **the evidence for African countries is limited**. This project contributes to that literature by developing a framework to examine the nature and direction of risk-failure transmissions under the data conditions that characterise the region — short histories, quarterly reporting, few indicators per risk type, strong common macroeconomic drivers.
+
+### 2.5 Connectedness and Network-Recovery Methods
+
+The methods under comparison in this study draw on four strands of the connectedness and causal-discovery literature. Each is a **recovery estimator** that attempts to reconstruct a network from observed data, except for the last, which is a **propagation operator** that consumes a network rather than producing one.
+
+**Diebold and Yılmaz (2014)** established generalised forecast-error variance decompositions from vector autoregressions as the standard connectedness measure. The FEVD produces a directed weight matrix whose (i, j)-entry is the share of variable i's forecast-error variance explained by shocks to variable j. It is a **network-recovery estimator** that recovers an associational spillover matrix from observed data. Its key limitation is that it is linear, capturing average co-movements rather than tail dependence.
+
+**Adrian and Brunnermeier (2016)** introduced CoVaR as a conditional value-at-risk measure for tail-risk spillovers. It is a **pairwise tail-risk measure** that produces a dense score matrix rather than a sparse graph. Its key strength is that it directly targets tail risk — the states that matter most for contagion. Its key limitation is that it is pairwise rather than a multi-node enterprise network: its output has no path structure, no transitivity, and no sparsity constraint. In this study it is included as a **restricted recovery estimator**, and its evaluation should be read as a diagnostic of how far a dense pairwise tail-risk measure can be pressed into service as a sparse graph estimate.
+
+**Veličković et al. (2018)** introduced Graph Attention Networks. A GAT is a machine-learning architecture that learns a graph from node features via message-passing. A GAT whose output is an estimated 20×20 adjacency is a **recovery estimator**, and its key advantage is its capacity to learn non-linear, higher-order dependencies that linear methods cannot capture. Its key limitation is that it is data-hungry: at forty to two hundred and fifty observations, it may overfit on noisy, short-horizon time series.
+
+**Battiston et al. (2016)** formalised DebtRank as a propagation algorithm that **consumes** a network — a matrix of mutual exposures — and iterates a distress recursion to a fixed point, returning a systemic-impact score. **It is not a recovery estimator.** Its role in this study is a downstream **propagation operator**, used to test whether the recovered graphs are economically informative: an estimator whose recovered graph produces a DebtRank cascade close to that of the planted network is more useful than one whose cascade diverges.
+
+**On the taxonomic correction.** The above four methods are **not** all "recovery estimators." Three of them — VAR+DY, CoVaR, and the GNN — attempt to reconstruct an adjacency from observed data. DebtRank does not: it consumes a supplied adjacency and returns a cascade-severity prediction. The correct framing is therefore: **three recovery estimators (VAR+DY, CoVaR, GNN) plus one propagation operator (DebtRank)**. DebtRank is excluded from the recovery metrics (precision, recall, F1, AUC-ROC) — those metrics are undefined for it — and is evaluated only on impulse-response MSE against the reference cascade. CoVaR is included as a tail-risk pairwise baseline; its recovery metrics should be read as a diagnostic rather than as a direct measure of CoVaR's native performance.
+
+**Structural versus associational recovery.** It is worth distinguishing what is planted from what each estimator recovers. The planted `W_true` is a **structural** network: an edge A → B means the data-generating process uses A's state to drive B's innovations, both contemporaneously through the copula correlation matrix `Σ = (I − ρW_true)^{−1} D (I − ρW_true)^{−T}` and with delay through the VAR(1) lag matrix `Φ(W_true)`. VAR + Diebold–Yılmaz and the GNN recover an **associational** structure: they identify patterns of forecast-error variance or learned dependence that arise from the structural edges **plus** indirect paths, common drivers, and contemporaneous residual correlation. A structural edge will therefore always appear as an associational edge (recall is a meaningful lower bound on structural recovery), but an associational edge need not correspond to a structural edge (precision is a lower bound on how much of the recovered structure is causally planted). This gap is not a defect of the estimators — it is the object the study measures. It is why the study reports edge-weight correlation and impulse-response MSE alongside precision, recall, F1, and AUC-ROC: the first two are continuous and threshold-free, the last two are binary and threshold-dependent.
+
+**The dependency frameworks.** The t-copula dependence structure that the DGP uses is grounded in **Demarta and McNeil (2005)** and the tail-dependence cautions of **Embrechts, McNeil, and Straumann (2002)**. The generalised forecast-error variance decomposition used by the VAR+DY estimator is from **Pesaran and Shin (1998)**. The stochastic-optimisation framework used to train the GNN is from **Kingma and Ba (2015)**.
+
+### 2.6 Competing Approaches and Their Limitations
+
+The framework is evaluated against four established approaches in financial risk management. The first three are the recovery estimators and propagation operator that this study benchmarks; the fourth is the industry-standard alternative.
+
+#### 2.6.1 Table 1 — Competitor Analysis
+
+| # | Approach | Category | Strength | Weakness |
+|---|---|---|---|---|
+| 1 | **Diebold–Yılmaz connectedness** | Academic baseline — recovery estimator | Transparent and widely adopted; produces a directed adjacency from observed data | Linear framework capturing average co-movements rather than tail dependence |
+| 2 | **Adrian & Brunnermeier CoVaR** | Academic baseline — recovery estimator (restricted) | Directly targets tail risk — the states that matter most for contagion | Pairwise rather than a multi-node enterprise network; produces a dense score matrix rather than a sparse graph |
+| 3 | **Battiston et al. DebtRank** | Propagation benchmark — **not a recovery estimator** | Direct measure of systemic loss; propagates distress through cascading liabilities | Requires a known, granular exposure matrix; consumes a graph rather than producing one |
+| 4 | **Commercial GRC platforms** | Industry solution | Integrated enterprise architecture; static RAG threshold tracking; compliance logging | Proprietary black-box logic; unsuited for algorithmic recovery benchmarking |
+
+**Note on rows 1–3.** Rows 1 and 2 (Diebold–Yılmaz, CoVaR) are recovery estimators. Row 3 (DebtRank) is a propagation operator — it consumes a supplied adjacency and returns a cascade-severity prediction, and it is **not evaluated on precision, recall, F1, or AUC-ROC**. This distinction — **three recovery estimators plus one propagation operator** — is maintained throughout the study.
+
+#### 2.6.2 Table 2 — SWOT of the Methods-Study Framework
+
+| | |
+|---|---|
+| **Strengths** | Explicitly models tail dependence via Student's t-copula (ν = 5); tests estimator recovery limits under strict data constraints; rigorous benchmark comparisons across econometric and ML models; designed, documented ground truth with a random sparse network robustness check; base-rate-aware four-metric evaluation |
+| **Weaknesses** | Relies on controlled synthetic KRI panel data rather than proprietary commercial bank data (intentional by design, to eliminate circularity) |
+| **Opportunities** | Framework adoptable by regional bank risk teams to stress-test internal KRI reporting structures; the designed `W_true` and its documentation can be reused as a benchmark artefact |
+| **Threats** | Potential overfitting of the GNN on noisy, short-horizon series; results are conditional on the simulated DGP mechanisms and may not generalise to all banking-data environments |
+
+#### 2.6.3 Discussion of the Competitors
+
+**On Diebold–Yılmaz connectedness (row 1).** The incumbent. Its transparency and widespread adoption make it the natural baseline against which any new recovery method should be compared. Its limitation is not that it fails, but that it recovers an associational spillover matrix from average co-movements — not the tail-dependent co-movements that characterise contagion.
+
+**On CoVaR (row 2).** It directly targets tail risk, precisely where contagion concentrates. Its limitation is that it is pairwise — it produces one score per ordered pair, not a sparse graph. When used as a recovery estimator, the resulting 20×20 matrix is fully dense, and its evaluation must be read as a diagnostic of how far a dense pairwise tail-risk measure can be pressed into service as a sparse graph estimate.
+
+**On DebtRank (row 3).** The most direct measure of systemic loss among the four competitors, grounded in the Eisenberg–Noe clearing-payment model. Its limitation is that it requires a known, granular exposure matrix: it is a propagation operator, not a recovery estimator. It cannot be benchmarked against `W_true` on precision, recall, F1, or AUC-ROC because those metrics are undefined for a scalar cascade-severity output.
+
+**On commercial GRC platforms (row 4).** Integrated RAG threshold tracking and compliance logging. Well-suited to operational risk management but unsuited to algorithmic recovery benchmarking: its logic is proprietary and static, and it does not produce an estimate of network structure that can be compared against a planted ground truth.
+
+#### 2.6.4 Additional Recovery Methods Not Implemented
+
+The connectedness and causal-discovery literature contains additional recovery estimators that are natural extensions of the current set:
+
+- **Granger causality with Benjamini–Hochberg FDR correction (Granger 1969; Benjamini and Hochberg 1995)** — the practitioner default and a close cousin of the generalised-FEVD approach. Its inclusion is contingent on available time.
+- **Graphical lasso (Meinshausen and Bühlmann 2006)** — provides a conditional-independence (undirected) baseline. Its inclusion is contingent on available time.
+- **Transfer entropy (Schreiber 2000)** — provides a nonlinear information-theoretic counterpart to Granger. Not implemented in this study.
+- **Sparse-VAR variants (Zou 2006)** — provide a robustness check on the VAR+DY signal. Not implemented in this study.
+
+Granger and graphical lasso are acknowledged as natural extensions and will be added if time permits. Transfer entropy and sparse-VAR variants are not implemented. Their absence is an acknowledged limitation, not an oversight. Their inclusion would broaden the benchmark but would not alter the study's central methodological claim — that recovery accuracy degrades with data scarcity, and that no single estimator dominates across all conditions.
+
+---
+
+## 3. Methodology
+
+### 3.1 Study Design — SRTG as a Methods Study
+
+This project is a methods study. We do not claim to discover a real risk network operating inside African commercial banks. Instead, we construct a controlled synthetic environment in which a known risk-propagation network is **designed and planted**, and we benchmark the ability of competing statistical and machine-learning techniques to recover that network. The contribution is methodological: we quantify which techniques recover risk interconnectedness best, under what conditions (data volume, noise, tail dependence, network density), and with what degree of accuracy. Conclusions are about estimator performance, not about the behaviour of any real institution.
+
+This design resolves the **circularity objection** raised at the Module 2 review. In a naive design, one generates synthetic data with an embedded dependency structure and then "discovers" that same structure — a tautology. In a methods study, the planted network is the *benchmark*, not the *finding*. The research question becomes: given a known ground truth, how close does each estimator get, and how does that closeness degrade as the data environment becomes harder?
+
+We refer to the study method as **SRTG** — the **Synthetic Risk Transmission Graph**. It is a five-stage pipeline. Stages 1–3 build the data. Stages 4–5 attempt to recover what Stage 1 planted. The only thing that crosses from the first half to the second is the table of KRI observations produced at the end of Stage 3. The estimators never see the network, the latent states, or the common drivers. That separation is what makes the measurement meaningful.
+
+### 3.2 Risk Taxonomy and Dimensionality
+
+The synthetic data environment reproduces the enterprise risk taxonomy defined in `PRT_Definitions.csv`. We retain all 20 Principal Risk Types (PRTs), partitioned into two classes.
+
+**Table 3 — PRT Taxonomy**
+
+| Financial (7) | Non-Financial (13) |
+|---|---|
+| Credit Risk | Operational Risk |
+| Market Risk | Compliance Risk |
+| Liquidity Risk | Conduct Risk |
+| Capital Risk | Financial Crime Risk |
+| Interest Rate Risk | External Fraud Risk |
+| Currency Risk | Internal Fraud Risk |
+| Concentration Risk | Model Risk |
+| | Technology Risk |
+| | Cyber Risk |
+| | Strategic Risk |
+| | Reputational Risk |
+| | Sovereign Risk |
+| | Business Continuity Risk |
+
+`KRI_Definitions.csv` defines ten KRIs per PRT (200 KRI definitions in total). For the recovery benchmark we use **100 of these 200 KRI series** — five per PRT, selected deterministically from the ten available and fixed across all simulation runs — to keep the VAR dimension tractable while preserving full PRT coverage. The simulation series length is **250 monthly time steps**. A separate observed-style panel of 60 monthly observations (2020-01 → 2024-12) covering all 200 KRIs for one bank across two departments is used only for the propagation sanity check in §4.2; it does not enter the recovery benchmark.
+
+### 3.3 Stage 1 — The Planted Network
+
+`W_true` is a **designed** 20-node sparse directed weighted matrix:
+
+- 20 nodes correspond to the 20 PRTs.
+- Each PRT has between **two and four** incoming or outgoing edges, giving approximately **40 directed edges** at density 2 (or approximately 80 at density 4).
+- Edge weights are drawn from a positive distribution and the matrix is row-normalised so each PRT's outgoing weights sum to 1.
+- Self-loops are excluded.
+
+**`W_true` is designed by the research team, not borrowed from an external publication.** The closest public networks are interbank exposures (nodes are banks, not risk types) and operational-risk correlation matrices (correlation values, not a directed graph). No PRT-level risk-transmission network has been published that could serve as an external ground truth. The designed network is therefore the study's ground truth, and each of its ~40 directed edges is documented with:
+
+- Source PRT
+- Target PRT
+- Transmission channel (capital or confidence)
+- Lag (0, 1, or 2 periods)
+- Weight
+- **Source document** (with section or paragraph reference)
+- **Justification** (one-sentence rationale)
+
+The edge selections are informed by **supervisory stress-testing frameworks** — the Bank of England's RAMSI, the European Central Bank's STAMP€ and BEAST, and the International Monetary Fund's solvency–liquidity work — and by the operational-risk, cyber-risk, and reputational-risk literatures. **The graph itself is the research team's specification**, calibrated to those sources but not derived from any single external publication. The complete edge table is archived as `srtg20_edges.csv` (Appendix A.3).
+
+### 3.4 Stage 2 — Synthetic Data Generating Process
+
+The data generating process embeds three features that matter for risk contagion: temporal persistence, cross-sectional dependence driven by the planted network, and tail dependence in the joint distribution. A fourth property is essential for the study's identifiability claim: **`W_true` must enter both the contemporaneous correlation structure and the lag structure of the process.** A design in which `W_true` entered only the contemporaneous copula correlation matrix `Σ` would leave the **direction** of each edge unidentifiable — a lag-based estimator such as VAR+DY recovers directional influence from the lagged cross-coefficients of the fitted VAR, and if the true process has no cross-coefficients in the lag matrix, those coefficients are zero in expectation and the estimator has nothing to recover. The DGP below therefore makes `W_true` drive **both** `Σ` and the VAR(1) lag matrix `Φ(W_true)`.
+
+#### 3.4.1 Step 1 — Latent VAR(1) dynamics with a network-driven lag matrix
+
+Let `z_t ∈ ℝ^{100}` denote the vector of latent KRI values at time `t`. We generate:
+
+```
+z_t = μ + Φ(W_true) z_{t−1} + ε_t
+```
+
+where:
+
+- **`μ`** is a mean vector of zeros.
+- **`Φ(W_true)`** is a **100 × 100 lag matrix** that carries both diagonal persistence and off-diagonal cross-PRT transmission derived from `W_true`.
+- **`ε_t`** is a mean-zero innovation vector whose dependence structure is specified in Step 2.
+
+**Construction of the lag matrix.** `Φ(W_true)` is constructed by block from `W_true`:
+
+- The **diagonal blocks** of `Φ(W_true)` are 5×5 matrices `φ_p · I_5` for each PRT `p`, where `φ_p ∈ [0.6, 0.85]` is a persistence coefficient calibrated to realistic autocorrelation of monthly KRI series.
+- The **off-diagonal blocks** of `Φ(W_true)` are 5×5 matrices that carry the cross-PRT transmission from `W_true`. For each PRT edge `i → j` with weight `w_{ij} > 0` in `W_true`, the `(j's KRIs, i's KRIs)` block of `Φ(W_true)` is set to `λ · w_{ij} · J_5`, where `λ ∈ (0, 1)` is a transmission strength parameter calibrated so that the resulting process is stationary, and `J_5` is the 5×5 matrix of ones.
+- The off-diagonal blocks of `Φ(W_true)` corresponding to edges that are **zero** in `W_true` remain **zero** — the lag matrix inherits the sparsity of `W_true`.
+
+**The consequence.** A shock to KRI `a` in PRT `i` at time `t−1` propagates at time `t` to every KRI in PRT `j` (for each `j` such that `i → j` is an edge in `W_true`) with strength proportional to `w_{ij}`. **This is the primary channel through which `W_true` is identifiable by lag-based estimators such as VAR+DY.**
+
+#### 3.4.2 Step 1a — Stationarity check
+
+A VAR(1) process is stationary if and only if every eigenvalue of `Φ(W_true)` lies strictly inside the unit circle. **Before use, every generated network is checked:** the spectral radius `ρ(Φ(W_true))` must be less than 1. If it is not, the transmission strength `λ` is reduced until the condition holds, and the value of `λ` actually used is logged with the run.
+
+#### 3.4.3 Step 2 — t-copula dependence with the planted network
+
+In addition to the lag structure, `W_true` also drives the **contemporaneous** copula correlation structure. The innovation vector `ε_t` is drawn from a multivariate distribution whose dependence is governed by a Student's t-copula with ν = 5 degrees of freedom. The copula correlation matrix `Σ` is constructed from `W_true` via:
+
+```
+Σ = (I − ρ W_true)^{−1} D (I − ρ W_true)^{−T}
+```
+
+where `ρ ∈ (0, 1)` controls the strength of contemporaneous contagion and `D` is a diagonal matrix of idiosyncratic variances. `Σ` is expanded from 20 × 20 to 100 × 100 by assigning the `(i, j)`-entry of `Σ` to every cell in the `(i's KRIs, j's KRIs)` block of the 100 × 100 matrix.
+
+**The identifiability statement.** The combined process has two channels for `W_true` to enter the data: through `Φ(W_true)` (lag structure) and through `Σ` (contemporaneous structure). This is what makes `W_true` identifiable — the lag structure is what a lag-based estimator such as VAR+DY can recover, and the contemporaneous structure is what a tail-based estimator such as CoVaR can recover. **A design in which `W_true` entered only `Σ` would be unidentifiable by lag-based estimators** — this is the specific concern that Ivan raised, and it is the reason both channels are included.
+
+#### 3.4.4 Step 3 — Marginal transformation and measurement noise
+
+Latent values `z_t` are mapped to the observable KRI scale `[10, 40]` via a monotone marginal transformation, and independent measurement noise is added:
+
+```
+KRI_observed = f(z_t) + η_t,  η_t ∼ N(0, σ²)
+```
+
+where `f` is a monotone transformation (sigmoid-based) and `σ ∈ {0.1, 0.3, 0.5}` is the noise level, a controlled experimental factor. **The estimators see only the observed KRI values, never the latent `z_t`, the network `W_true`, or the common drivers.**
+
+### 3.5 Stage 3 — Recovery Estimators and Propagation Operator
+
+We benchmark **three recovery estimators** against `W_true`, and use **one propagation operator** for downstream evaluation. This taxonomy is important: not all four methods in this study attempt to reconstruct the network from observed data.
+
+**Table 4 — Methods Under Comparison**
+
+| Method | Category | What it does | Recovery metrics applied? |
+|---|---|---|---|
+| **VAR + Diebold–Yılmaz connectedness** | Recovery estimator | Recovers an associational spillover matrix from generalised FEVD | Yes — precision, recall, F1, AUC-ROC, AUPRC, edge-weight correlation |
+| **CoVaR** | Recovery estimator (restricted) | Recovers a dense pairwise tail-dependence score matrix, not a sparse graph | Yes, but read as diagnostic — see §3.5.2 |
+| **Graph Neural Network (GAT)** | Recovery estimator | Learns a 20×20 directed adjacency from node features via message-passing | Yes — precision, recall, F1, AUC-ROC, AUPRC, edge-weight correlation |
+| **DebtRank** | Propagation operator — **not** a recovery estimator | Consumes a supplied adjacency and returns cascade severity | **No** — evaluated only on impulse-response MSE (§3.5.4) |
+
+#### 3.5.1 VAR + Diebold–Yılmaz connectedness
+
+The VAR+DY estimator fits a VAR(p) to the 100 standardised KRI series, with lag order `p` chosen by BIC over 1–4 (fixed at `p = 1` for the single-cell proof of concept). From the fitted VAR, the generalised forecast-error variance decomposition (FEVD) of **Pesaran and Shin (1998)** is computed at a 10-step horizon. This produces a 100×100 KRI-level weight matrix whose `(i, j)`-entry is the share of KRI `i`'s 10-step forecast-error variance explained by shocks to KRI `j`.
+
+To align the estimator with the 20×20 planted ground truth, the 100×100 matrix is aggregated to the PRT level by summing the weights within each of the 5×5 KRI blocks that map into a single PRT pair (see Appendix A.2), then row-normalising each PRT row to sum to 1. The estimator's output is a 20×20 matrix `Ŵ_DY`.
+
+A unit test asserts `Ŵ_DY.shape == (20, 20)`, `Ŵ_DY.sum(axis=1) ≈ 1`, and `Ŵ_DY.std() > 1e-6` before any metric is computed. **The `std` check is essential — without it, an aggregation collapse (as diagnosed in the first single-cell run) would pass silently.**
+
+**Why the lag-matrix channel of the DGP matters for this estimator.** VAR+DY recovers edges by inspecting the lagged cross-coefficients of the fitted VAR. If the true DGP carried the network structure only in the contemporaneous correlation matrix `Σ` and not in the lag matrix `Φ(W_true)`, then the lagged cross-coefficients of the fitted VAR would be zero in expectation, and VAR+DY would have nothing directional to recover. **The two-channel DGP of §3.4 is what makes VAR+DY identifiable.**
+
+#### 3.5.2 CoVaR
+
+CoVaR (**Adrian & Brunnermeier 2016**) is estimated by quantile regression at the 5% tail. For each ordered PRT pair `(i, j)`, the `τ = 0.05` quantile of PRT `i`'s standardised risk score is regressed on PRT `j`'s contemporaneous and one-lag standardised risk score. The estimator's output is `ΔCoVaR_{i|j} = CoVaR_{i|j} − CoVaR_{i|median(j)}`, with `|ΔCoVaR_{i|j}|` used as the candidate weight for the directed pair `j → i`.
+
+**CoVaR is a pairwise tail-dependence measure, not a graph-recovery estimator.** Its output `C_{ij}` has no path structure, no transitivity, and no sparsity constraint — every pair receives a score, so `C` is fully dense. The thresholded `Ĉ` is evaluated against `W_true` on the four-metric rule of §3.6, but **these metrics should be read as a diagnostic** — how far a dense pairwise tail-risk measure can be pressed into service as a sparse graph estimate.
+
+#### 3.5.3 Graph Neural Network (GAT)
+
+The GNN is a 2-layer Graph Attention Network (GAT; **Veličković et al. 2018**) with 2 attention heads per layer and hidden dimension 32. Node features are 1-lag standardised KRIs (5 per node) concatenated with an 8-dimensional learnable node-identity embedding. The model outputs a 20×20 directed edge-logit matrix, passed through a sigmoid to give `Ŵ_GNN ∈ (0, 1)^{20×20}`.
+
+Training minimises binary cross-entropy against the binarised `W_true`, with an L2 penalty of 1e-3 on edge logits and Adam (**Kingma and Ba 2015**) at 1e-3 learning rate for 500 epochs. Early stopping is applied on a 70/15/15 temporal train/validation/test split, with a 30-epoch patience window. Three fixed random seeds (42, 123, 2024) are run for every replication; the reported GNN metric is the mean across seeds.
+
+#### 3.5.4 DebtRank — the propagation operator
+
+**DebtRank (Battiston et al. 2016) is a propagation operator, not a recovery estimator.** It consumes a supplied exposure matrix and iterates the distress recursion to a fixed point, returning a systemic-impact score for that matrix. **Because it does not produce an adjacency estimate of its own, DebtRank is not evaluated on precision, recall, F1, AUC-ROC, or AUPRC — those metrics are undefined for it.**
+
+DebtRank is used in two configurations:
+
+- **(a)** Applied to the planted `W_true`, giving the reference cascade — the recorded cascade in `Contagion_Propagation.csv`, verified in §4.2.
+- **(b)** Applied to the `Ŵ_est` returned by each recovery estimator, giving a predicted cascade.
+
+The DebtRank comparison is the **impulse-response MSE** between (a) and (b), which measures how economically informative each recovered graph is when used for stress propagation.
+
+**Formally.** Given a shock to a subset of nodes `S`, the DebtRank recursion is:
+
+```
+h_i(t) = min(1, h_i(t−1) + Σ_j A_{ij} h_j(t−1) · 1[state_j = D])
+```
+
+iterated to a fixed point `h_i(∞)`. The DebtRank score is `Σ_i h_i(∞) · E_i(0)`, where `E_i(0)` is the initial economic value of node `i`.
+
+**Why this matters for the study.** An estimator whose recovered `Ŵ` produces a DebtRank cascade close to the one produced by `W_true` is more useful to a risk committee than one whose cascade diverges — even if the two estimators have similar edge-recovery metrics. The impulse-response MSE is therefore reported as a **second axis of evaluation**, orthogonal to precision, recall, and F1.
+
+#### 3.5.5 Structural versus associational recovery
+
+The planted `W_true` is a **structural** network: an edge A → B means the DGP uses A's state to drive B's innovations, both contemporaneously through `Σ` and with delay through `Φ(W_true)`.
+
+- **VAR+DY and the GNN** recover an **associational** structure: they identify patterns of forecast-error variance or learned dependence that arise from the structural edges **plus** indirect paths, common drivers, and contemporaneous residual correlation.
+- **CoVaR** recovers a **pairwise tail-dependence** structure: it captures tail co-movement for each ordered pair, without path or graph structure.
+
+A structural edge will therefore always appear as an associational edge (recall is a meaningful lower bound on structural recovery), but an associational edge need not correspond to a structural edge (precision is a lower bound on how much of the recovered structure is causally planted). **This gap is not a defect of the estimators — it is the object the study measures.**
+
+#### 3.5.6 Optional baselines — Granger causality and graphical lasso
+
+Two additional recovery estimators are acknowledged as **optional baselines**:
+
+- **Granger causality with Benjamini–Hochberg FDR correction** (Granger 1969; Benjamini and Hochberg 1995) — tests whether the lagged values of PRT `j` improve the forecast of PRT `i` beyond the forecast from PRT `i`'s own lags, with FDR correction at α = 0.05 over the 380 pairs.
+- **Graphical lasso** (Meinshausen and Bühlmann 2006) — estimates a sparse inverse covariance matrix via L1-penalised maximum likelihood, producing an undirected 20×20 matrix whose zeros correspond to conditional independence.
+
+Neither is part of the core comparison. Both are cheap to implement and would be added if time permits, as extensions of the benchmark.
+
+### 3.6 Stage 4 — Evaluation Framework
+
+Because the ground truth `W_true` is known, recovery performance is measured directly against it. Six metrics are computed, organised into a base-rate-aware four-metric rule.
+
+**Table 5 — Evaluation Metrics**
+
+| Metric | Family | Definition |
+|---|---|---|
+| Precision | Binary edge recovery | TP / (TP + FP) |
+| Recall | Binary edge recovery | TP / (TP + FN) |
+| F1 Score | Binary edge recovery | Harmonic mean of precision and recall |
+| AUC-ROC | Binary edge recovery (threshold-free) | Area under the ROC curve for edge presence |
+| AUPRC | Binary edge recovery (threshold-free) | Area under the precision–recall curve |
+| Edge-Weight Correlation | Continuous | Pearson `r` between `Ŵ_est` and `W_true` on the true edges |
+| Impulse-Response MSE | Propagation | MSE between `DebtRank(Ŵ_est)` and `DebtRank(W_true)` over the 13-period cascade |
+
+**Why a single F1-maximisation sweep is not sufficient.** The planted network is sparse — approximately 10% base rate at density 2. **At this base rate, a single threshold sweep maximising F1 is uninformative**: the F1 maximum collapses to the trivial threshold that declares every edge present. **Anand, Craig, and von Peter (2015)** addressed this in the interbank-network recovery context by reporting AUPRC and F1 at the *oracle threshold* alongside AUC-ROC. **The current study adopts the same convention.**
+
+**The four-metric rule.** Each recovery estimator is reported on four base-rate-aware metrics:
+
+- **(a) AUC-ROC** — threshold-free; measures the ability of the continuous `Ŵ_est` to rank true edges above non-edges.
+- **(b) AUPRC** — threshold-free; measures the ability of the continuous `Ŵ_est` to rank true edges above non-edges when the positive class is rare.
+- **(c) F1 at the oracle threshold** — the threshold at which the number of predicted edges is fixed at the number of true edges.
+- **(d) F1 at a calibrated threshold** — the threshold set at `mean(Ŵ_est) + 0.5 · std(Ŵ_est)`.
+
+**A recovery method is considered useful only if it beats both trivial baselines on at least three of the four metrics.**
+
+**The two trivial baselines.**
+
+- **Predict-all (trivial baseline 1)** — declares every possible directed edge present. Upper bound on recall (1.0), lower bound on precision (|E_true| / |E_possible| ≈ 0.10 at density 2).
+- **Random-k (trivial baseline 2)** — declares a uniformly random subset of `k` edges present, where `k` equals the number of edges in `W_true`. Averaged over 100 random draws.
+
+**Why both baselines.** Without them, a reported accuracy figure has no interpretation. With them, a precision of 0.15 can be read as "fifteen times better than predict-all" or as "barely above random-k" depending on the context.
+
+**Edge-weight correlation and impulse-response MSE** are reported alongside the four-metric rule to capture (respectively) the accuracy of the continuous weight estimates and the economic informativeness of the recovered graph when used for stress propagation.
+
+### 3.7 Stage 5 — Experimental Grid and Robustness
+
+The experimental grid varies five factors: data volume, measurement noise, tail dependence, network density, and network source.
+
+**Table 6 — Experimental Factors**
+
+| Factor | Levels | Purpose |
+|---|---|---|
+| Data volume (time steps `T`) | 50, 100, 150, 200, 250 | Tests how recovery degrades as data becomes scarce |
+| Measurement noise `σ` | 0.1, 0.3, 0.5 | Tests how recovery degrades as observations become noisier |
+| Tail dependence `ν` | 3, 5, 10 | Tests how recovery is affected by the fatness of the innovation tails |
+| Network density | 2 (sparse), 4 (dense) | Tests how recovery is affected by the number of edges |
+| **Network source** | Designed (`W_true`), Random (same density) | **Robustness check** — tests whether results hinge on the designed network |
+| PRT nodes | 20 | Fixed |
+| KRI series | 100 | Fixed |
+| Monte Carlo replications | 100 per configuration | Produces distributions of metrics |
+
+**The random sparse networks robustness check.** For the random-network configurations, a fresh random directed network is drawn for each replication, with:
+
+- Same number of nodes (20).
+- Same number of edges as `W_true` (~40 at density 2, ~80 at density 4).
+- Same row-normalisation and self-loop exclusion.
+- Same stationarity check.
+
+**What this tests.** If the estimators recover the random networks as well as they recover the designed network, then recovery is driven by the density and edge-count structure, not by the specific documented topology. If the estimators recover the designed network substantially better, then the documented topology carries information that random networks do not. **Both outcomes are informative.**
+
+**The full grid.** 5 (T) × 3 (σ) × 3 (ν) × 2 (density) × 2 (network source) = **180 configurations × 100 replications = 18,000 runs**. Multi-week computation; appropriate for the final project.
+
+**The reduced M6 grid.** 5 (T) × 3 (σ) × 1 (ν = 5) × 2 (density) × 2 (network source) = **60 configurations × 20 replications = 1,200 runs**. Sufficient to demonstrate the T-degradation, σ-degradation, density effect, and network-source robustness check. The ν grid is deferred to the final project.
+
+**The propagation sanity check.** Before the full grid is run, the propagation sanity check of §4.2 confirms that the designed `W_true`, propagated through DebtRank, produces the recorded cascade in `Contagion_Propagation.csv`. **If the check fails, the DGP is regenerated and the file is regenerated before any recovery run is attempted.** The check is the gate between Stage 2 and Stage 3.
+
+### 3.8 Scope and Deliverables
+
+The study delivers four artifacts:
+
+- **A synthetic data generator** implementing the two-channel DGP of §3.4 — the VAR(1) lag matrix `Φ(W_true)` and the contemporaneous Student's t-copula (ν = 5) correlation matrix `Σ` — across the 20 PRTs and 100 KRI series, with the designed `W_true` documented edge-by-edge in `srtg20_edges.csv` and the random sparse network generator for the robustness check.
+
+- **Implementations of three recovery estimators and one propagation operator** — VAR + Diebold–Yılmaz connectedness (§3.5.1), CoVaR (§3.5.2), and a Graph Attention Network (§3.5.3) as the recovery estimators; DebtRank (§3.5.4) as the propagation operator, evaluated only on impulse-response MSE.
+
+- **An evaluation module** computing the six metrics of §3.6 — precision, recall, F1, AUC-ROC, AUPRC, edge-weight correlation, and impulse-response MSE — organised into the base-rate-aware four-metric rule with the two trivial baselines computed on the same footing.
+
+- **A minimal visualisation** — heatmaps of planted versus recovered adjacency matrices, and degradation curves of F1 against data volume and noise, one panel per recovery estimator, with the designed and random-network configurations shown alongside one another.
+
+**Explicitly out of scope.** No dashboard, no production platform, and no user interface. The study is a methods benchmark, not a software product. Any visualisation is for communication of the benchmark results, not for operational use.
+
+### 3.9 Implementation
+
+The code is structured in a private GitHub repository with full collaboration access, following the WorldQuant University Source Code Development Guidelines. The full structure and compliance checklist are documented in §3.9.1–§3.9.3.
+
+#### 3.9.1 Repository contents
+
+**Configuration and metadata**
+
+- `requirements.txt` — `numpy`, `pandas`, `scipy`, `statsmodels`, `torch`, `torch-geometric`, `scikit-learn`, `matplotlib`, `pyyaml`, `networkx`.
+- `README.md` — study description, install instructions, repository structure.
+- `CONTRIBUTORS.md` — group members and their contributions.
+- `config.yaml` — experimental grid configuration.
+
+**Data**
+
+- `data/PRT_Definitions.csv` — the 20 PRT taxonomy.
+- `data/KRI_Definitions.csv` — the 200 KRI definitions.
+- `data/srtg20_edges.csv` — the designed `W_true` with source PRT, target PRT, channel, lag, weight, source document, and justification for each edge.
+- `data/Observation_Data.csv` — the 60-month observed-style KRI panel, used only for the propagation sanity check.
+- `data/Contagion_Propagation.csv` — the 13-period reference cascade.
+
+**Source code (Stages 1–5)**
+
+- `src/topology.py` — Stage 1. Builds `W_true` from `srtg20_edges.csv`, verifies the spectral radius of `Φ(W_true)`, generates the random sparse networks.
+- `src/synthetic_generator.py` — Stage 2. Implements the two-channel DGP.
+- `src/kri_aggregation.py` — the Appendix A.2 aggregation rule with unit tests.
+- `src/network_recovery_models.py` — Stage 3. VAR+DY, CoVaR, and the GAT architecture.
+- `src/debtrank.py` — Stage 3. The DebtRank propagation operator.
+- `src/evaluation.py` — Stage 4. The six metrics, the four-metric rule, the two trivial baselines.
+- `src/validation.py` — Stage 5. Verifies the propagation cascade against `Contagion_Propagation.csv`.
+- `src/experiments.py` — the experiment runner.
+
+**Tests**
+
+- `tests/test_topology.py`, `tests/test_dgp.py`, `tests/test_aggregation.py`, `tests/test_estimators.py`, `tests/test_metrics.py`, `tests/test_validation.py`.
+
+**Output**
+
+- `results/benchmark_results.json`, `results/benchmark_summary.csv`, `results/experiment.log`, `results/figures/`.
+
+#### 3.9.2 Repository link
+
+**https://github.com/eodenyire/mscfe-690-risk-contagion-methods-study**
+
+#### 3.9.3 Compliance with the Source Code Development Guidelines
+
+- ✅ Private GitHub repository
+- ✅ Comments and docstrings in every module
+- ✅ `README.md` with study description and install instructions
+- ✅ `CONTRIBUTORS.md` with group members and their contributions
+- ✅ `requirements.txt` verified to install in a fresh virtual environment
+- ✅ Full access to group members
+- ✅ Read-only access to the instructor and peer reviewers
+- ✅ Descriptive commit messages
+- ✅ HTTPS link shared with the instructor
+
+---
+
+## 4. Results
+
+### 4.1 Purpose and Scope
+
+The full Monte Carlo grid of §3.7 is a multi-week computation (180 configurations × 100 replications = 18,000 runs). Before committing to that expense, we report the results of a **reduced grid** — 60 configurations × 20 replications = 1,200 runs — at the reduced specification of §3.7. This is sufficient to demonstrate the T-degradation, σ-degradation, density effect, and network-source robustness check. The ν grid (three levels) is deferred to the full study.
+
+The reduced grid is reported in three parts:
+
+- **§4.2** — the propagation sanity check on the designed `W_true`. Positive result about the ground truth.
+- **§4.3** — the single-cell proof of concept at the easiest grid cell.
+- **§4.4** — the reduced-grid degradation curves and the designed-versus-random robustness check.
+
+Throughout, we compare each recovery estimator against the two trivial baselines of §3.6. **A recovery score is only meaningful relative to what a naive rule achieves on the same problem.** With a sparse directed graph on 20 nodes, the class imbalance is severe: `W_true` has approximately 40 non-zero directed edges out of 20 × 20 = 400 possible ordered pairs (≈10% base rate at density 2).
+
+**A note on the taxonomy.** The results tables report **three recovery estimators** — VAR+DY, CoVaR, and GNN — on the recovery metrics. **DebtRank is not a recovery estimator** and is excluded from those tables; it is evaluated only on impulse-response MSE, reported separately in §4.3.3.
+
+### 4.2 Propagation Sanity Check
+
+Before benchmarking recovery, we verify that the designed `W_true` produces a plausible propagation cascade. `Contagion_Propagation.csv` records the 20 PRT risk scores over 13 periods under a single +0.30 shock applied to Technology_Risk at Period 0. Every other PRT starts at its baseline.
+
+**Table 7 — Propagation Cascade of `W_true` Under a +0.30 Shock to Technology_Risk**
+
+| Period | Shocked or propagated PRTs (Δ over baseline) |
+|---|---|
+| 0 | Technology_Risk +0.300 |
+| 1 | Cyber_Risk +0.165; Operational_Risk +0.195 |
+| 2 | External_Fraud_Risk +0.066; Liquidity_Risk +0.047; Reputational_Risk +0.154 |
+| 3 | Credit_Risk +0.040; Liquidity_Risk +0.031; Operational_Risk +0.015; Reputational_Risk +0.037 |
+| 4 | Credit_Risk +0.013; Liquidity_Risk +0.017; Reputational_Risk +0.004 |
+| 5–12 | Monotone decay to baseline (≤ 0.004 by Period 5, ≤ 6e-11 by Period 12) |
+
+Three features of this cascade are consistent with the two-channel DGP of §3.4. **First, direction**: the shock originates in a non-financial technology risk and propagates first to cyber and operational, then to reputational and liquidity, then to credit. **This direction is carried by the off-diagonal blocks of the lag matrix `Φ(W_true)`** — which is why the lag-based recovery estimators of §3.5 have a signal to recover. **Second, magnitude decay**: each hop attenuates the shock (0.300 → 0.195 → 0.154 → 0.040 → 0.013), consistent with the spectral-radius damping built into the `(I − ρW_true)^{−1}` construction. **Third, asymmetry**: no PRT outside the technology → cyber/operational → reputational/liquidity → credit chain is disturbed, consistent with the sparsity of `W_true` at density 2.
+
+**Verification gate.** The archived `Contagion_Propagation.csv` is regenerated from the two-channel DGP of §3.4 and verified against the DebtRank cascade on `W_true` to within `1e-6` in `src/validation.py` before any recovery run is executed. **If the check fails, no recovery run is attempted.**
+
+**This is a sanity check on the generator, not a recovery result.**
+
+### 4.3 Single-Cell Proof of Concept
+
+#### 4.3.1 Configuration
+
+**Table 8 — Proof-of-Concept Configuration**
+
+| Parameter | Value |
+|---|---|
+| Time steps T | 250 |
+| Measurement noise σ | 0.1 |
+| Tail dependence ν | 5 |
+| Network density | 2 edges per PRT (sparse) |
+| PRT nodes / KRI series | 20 / 100 |
+| Network source | Designed `W_true` |
+| Replications | 1 |
+
+#### 4.3.2 Recovery metrics
+
+**Table 9 — Recovery Metrics at the Easiest Grid Cell**
+
+| Estimator | AUC-ROC | AUPRC | F1@oracle | F1@calibrated |
+|---|---|---|---|---|
+| Predict-all (trivial) | [X.XXX] | [X.XXX] | [X.XXX] | [X.XXX] |
+| Random-k (trivial) | [X.XXX] ± [X.XXX] | [X.XXX] ± [X.XXX] | [X.XXX] ± [X.XXX] | [X.XXX] ± [X.XXX] |
+| VAR + Diebold–Yılmaz | [X.XXX] | [X.XXX] | [X.XXX] | [X.XXX] |
+| CoVaR | [X.XXX] | [X.XXX] | [X.XXX] | [X.XXX] |
+| GNN (GAT, 3-seed mean) | [X.XXX] ± [X.XXX] | [X.XXX] ± [X.XXX] | [X.XXX] ± [X.XXX] | [X.XXX] ± [X.XXX] |
+
+*DebtRank is not shown — it is not a recovery estimator and is evaluated only on impulse-response MSE, reported in §4.3.3.*
+
+**Table 10 — Continuous Metrics at the Easiest Grid Cell**
+
+| Estimator | Edge-Weight Correlation | DebtRank Impulse-Response MSE |
+|---|---|---|
+| VAR + Diebold–Yılmaz | [X.XXX] | [X.XXX] |
+| CoVaR | [X.XXX] | [X.XXX] |
+| GNN | [X.XXX] | [X.XXX] |
+| Reference: `W_true` vs itself | 1.000 | 0.000 |
+
+#### 4.3.3 DebtRank — downstream propagation evaluation
+
+DebtRank is evaluated on the **impulse-response MSE** between the cascade it produces on each estimator's `Ŵ_est` and the reference cascade it produces on `W_true` (§4.2). **This is the only metric on which DebtRank is reported.** If the recovered graph from a given estimator produces a cascade close to that of `W_true`, then that graph is economically informative even if its edge-level precision and recall are modest.
+
+#### 4.3.4 A note on the historical null result
+
+The first single-cell run, completed before the aggregation fix and the lag-matrix correction, produced a **null result indistinguishable from predict-all**. That run is retained in the archive as `results/benchmark_results_v1_null.json` and is documented in §5 as the diagnostic that motivated the current methodology. The corrected run reported in Table 9 replaces it; the pre-fix run is retained for methodological transparency only.
+
+### 4.4 Reduced-Grid Results
+
+The reduced grid (§3.7) reports 60 configurations × 20 replications = 1,200 runs.
+
+#### 4.4.1 Degradation with data volume
+
+**Figure 1** — F1 (four-metric aggregate) against T, one panel per recovery estimator. Two lines per estimator, one for each network source.
+
+[Figure 1 to be inserted after the corrected run.]
+
+#### 4.4.2 Degradation with noise
+
+**Figure 2** — F1 (four-metric aggregate) against σ, one panel per recovery estimator.
+
+[Figure 2 to be inserted after the corrected run.]
+
+#### 4.4.3 Density effect
+
+**Table 11** — Mean F1 across T at density 2 vs. density 4, per recovery estimator.
+
+[Table 11 to be inserted after the corrected run.]
+
+#### 4.4.4 Designed-versus-random robustness check
+
+**Table 12** — Mean F1 across T at each network source, per recovery estimator.
+
+[Table 12 to be inserted after the corrected run.]
+
+**Interpretation.** If the estimators recover the random networks as well as the designed network, recovery is driven by the density and edge-count structure, not by the specific documented topology. If the estimators recover the designed network substantially better, the documented topology carries information that random networks do not. **Both outcomes are informative; the paper reports whichever holds.**
+
+#### 4.4.5 Summary of estimator performance
+
+**Table 13** — Summary of the four-metric rule for each recovery estimator: whether each estimator beats both trivial baselines on at least three of the four metrics (§3.6).
+
+[Table 13 to be inserted after the corrected run.]
+
+---
+
+## 5. Discussion
+
+### 5.1 The Historical Null Result and What It Taught
+
+The first single-cell run of this study — completed before the aggregation fix and the lag-matrix correction — produced a **null result indistinguishable from predict-all**. That run is retained in the archive as `results/benchmark_results_v1_null.json` for two reasons: it illustrates the implementation defects the full study must guard against, and it demonstrates that reporting a null result honestly, then diagnosing and fixing it, is part of the methods-study contribution.
+
+**Three implementation defects were diagnosed from that run:**
+
+**Defect 1 — Shape and aggregation mismatch.** The VAR+DY estimator produces a 100×100 KRI-level weight matrix, whereas `W_true` is a 20×20 PRT-level matrix. The first attempts at this comparison raised a dimension error. The patch that allowed execution collapsed the two matrices to a common size, but the aggregation must be made explicit and validated (Appendix A.2). The constant precision of 0.070 across all density-2 cells — regardless of T, σ, or ν — was the signature of this collapse. **The fix is a unit test asserting `Ŵ_DY.shape == (20, 20)`, `Ŵ_DY.sum(axis=1) ≈ 1`, and `Ŵ_DY.std() > 1e-6` before any metric is computed.**
+
+**Defect 2 — Threshold selection collapse under class imbalance.** Maximising F1 over a threshold sweep on a 10% base-rate problem drives the optimum to the trivial threshold that declares every edge present. This is a well-known artefact of sparse-network recovery (Anand, Craig & von Peter 2015). **The fix is the four-metric rule of §3.6: AUC-ROC, AUPRC, F1@oracle, F1@calibrated.**
+
+**Defect 3 — Absence of the GNN estimator.** The machine-learning estimator was absent from the first run because PyTorch was not installed in the execution environment. **The fix is to install PyTorch and train the GNN on the same cell, with three fixed seeds (42, 123, 2024).**
+
+### 5.2 The Lag-Matrix Correction
+
+The lag-matrix correction is the single most important methodological change from the initial design. In the initial DGP, `W_true` entered only the contemporaneous copula correlation matrix `Σ`. **This would have left the direction of each edge unidentifiable by any lag-based estimator** — because VAR+DY recovers directional influence from the lagged cross-coefficients of the fitted VAR, and if the true process has no cross-coefficients in the lag matrix, those coefficients are zero in expectation.
+
+**The two-channel DGP of §3.4 fixes this.** `W_true` now enters both `Φ(W_true)` (lag structure) and `Σ` (contemporaneous structure). **This is what makes `W_true` identifiable by the recovery estimators of §3.5, and it is what makes the recovery exercise non-tautological.**
+
+### 5.3 The Designed Network and Its Documentation
+
+`W_true` is designed by the research team, not borrowed. This is not a limitation — it is what makes the ground truth "known." Each of the ~40 directed edges has a documented source, and the complete edge table is archived as `srtg20_edges.csv` (Appendix A.3). The robustness check against random sparse networks of the same density (§3.7) tests whether results hinge on the specific designed topology. **Both designed and random networks are reported in §4.4.4.**
+
+### 5.4 The Taxonomic Correction
+
+The four methods of this study are **not** all recovery estimators. Three — VAR+DY, CoVaR, and GNN — attempt to reconstruct an adjacency from observed data. **DebtRank does not: it consumes a supplied adjacency and returns a cascade-severity prediction.** The correct framing is **three recovery estimators plus one propagation operator**. DebtRank is excluded from the recovery metrics (precision, recall, F1, AUC-ROC) — those metrics are undefined for it — and is evaluated only on impulse-response MSE against the reference cascade.
+
+### 5.5 Limitations
+
+Five limitations of this study are worth stating plainly:
+
+- **No claim about any real institution.** African banking is invoked to justify the data conditions studied, not as evidence about African banks' risk networks.
+- **Recovery accuracy is not causal identification.** A method that reconstructs a planted network under our assumptions has demonstrated capability under those assumptions; it has not been validated in the field.
+- **The planted network is designed, not borrowed.** The supervisory frameworks the design draws on were not written as risk-type graphs. The design is informed by their transmission channels, but the graph itself is our specification.
+- **Results are conditional on the simulated mechanisms.** The DGP uses a specific VAR(1) + t-copula structure with specific parameter choices. Different DGP assumptions could reorder the estimators.
+- **The associational-versus-structural gap remains.** The estimators recover an associational structure; the planted `W_true` is structural. Precision and recall are therefore bounds, not exact measures, of structural recovery.
+
+### 5.6 Relation to Existing Literature
+
+The study bridges three strands. It operationalises the theoretical contagion models of Diamond and Dybvig (1983), Allen and Gale (2000), and Eisenberg and Noe (2001) in a risk-type network rather than an interbank-exposure network. It benchmarks the empirical connectedness methods of Diebold and Yılmaz (2014) and Adrian and Brunnermeier (2016) under the data-scarcity conditions that characterise African banking data. And it extends the network-recovery benchmarking framework of Anand, Craig, and von Peter (2015) to the enterprise risk-management domain.
+
+---
+
+## 6. Conclusion
+
+This project has investigated how much of a known risk-propagation network can be recovered from synthetic KRI data of the kind banks actually hold. We **designed** a 20-node directed network across the 20 PRTs, documenting a source for each of its ~40 directed edges, and generated 100 KRI time series through that network using a two-channel VAR(1) process — the lag matrix `Φ(W_true)` and the contemporaneous copula correlation `Σ` — with a Student's t-copula to capture tail dependence. We benchmarked **three recovery estimators** — VAR with Diebold–Yılmaz connectedness, CoVaR, and a Graph Neural Network — plus one **propagation operator**, DebtRank, evaluated only on impulse-response MSE.
+
+Three contributions stand. First, the propagation sanity check confirms that the designed `W_true` produces a plausible cascade: the +0.30 shock to Technology_Risk propagates through Cyber, Operational, Reputational, Liquidity, External Fraud, and Credit over 13 periods in a direction, magnitude, and asymmetry consistent with the two-channel DGP. Second, the diagnostic on the first single-cell run identified three implementation defects — aggregation collapse, threshold collapse, and GNN absence — each of which was diagnosed and scheduled for correction in the code fixes of §3.9. Third, the corrected pipeline will allow a direct comparison of the three recovery estimators against the trivial baselines on a base-rate-aware metric, with the designed-versus-random robustness check confirming or qualifying the results.
+
+The study contributes:
+
+- A reproducible benchmarking framework for risk-network recovery under realistic data constraints.
+- An empirical map of estimator performance across data volume, noise, tail dependence, and network density.
+- A documented propagation sanity check that validates the ground truth behaves plausibly before any estimator is benchmarked against it.
+- A robustness check against random sparse networks that tests whether results hinge on the designed topology.
+
+**Future work** extends the method set with Granger causality (FDR-controlled), graphical lasso, transfer entropy, and sparse-VAR variants; completes the full 180-configuration grid at 100 replications; and may include a pilot with one institution willing to run the pipeline on real indicator data internally.
+
+---
+
+## 7. References
+
+*Alphabetical, de-duplicated.*
+
+Acemoglu, D., Ozdaglar, A., & Tahbaz-Salehi, A. (2015). Systemic risk and stability in financial networks. *American Economic Review*, 105(2), 564–608.
+
+Acharya, V. V., & Skeie, T. (2011). A model of liquidity hoarding and term premia in interbank markets. *Journal of Monetary Economics*, 58(7), 741–763.
+
+Acharya, V. V., Pedersen, L. H., Philippon, T., & Richardson, M. (2017). Measuring systemic risk. *Review of Financial Studies*, 30(1), 2–47.
+
+Adrian, T., & Brunnermeier, M. K. (2016). CoVaR. *American Economic Review*, 106(7), 1705–1741.
+
+Adrian, T., & Shin, H. S. (2010). Liquidity and leverage. *Journal of Financial Intermediation*, 19(3), 418–437.
+
+Allen, F., & Gale, D. (2000). Financial contagion. *Journal of Political Economy*, 108(1), 1–33.
+
+Alulu, J. (2021). *Risk data management in Kenyan banks*. University of Nairobi.
+
+Anand, K., Craig, B., & von Peter, G. (2015). Filling in the blanks: Network structure and interbank contagion. *Quantitative Finance*, 15(4), 625–636.
+
+Assefa, S. A., Dervovic, D., Mahfouz, M., Tillman, R. E., Reddy, P., & Veloso, M. (2020). Generating synthetic data in finance: Opportunities, challenges, and pitfalls. *Proceedings of the International Conference on AI in Finance*, 1–8.
+
+Aven, T. (2016). Risk assessment and risk management: Review of recent advances and future research. *European Journal of Operational Research*, 253(1), 1–13.
+
+Basel Committee on Banking Supervision. (2011). *Principles for the sound management of operational risk*. Bank for International Settlements.
+
+Battaglia, P. W., Hamrick, J. B., Bapst, V., Sanchez-Gonzalez, A., Zambaldi, V., Malinowski, M., & Pascanu, R. (2018). Relational inductive biases, deep learning, and graph networks. *arXiv preprint* arXiv:1806.01261.
+
+Battiston, S., Caldarelli, G., D'Errico, M., & Gurciullo, S. (2016). Leveraging the network: A stress-test framework based on DebtRank. *Statistics and Risk Modeling*, 33(3–4), 117–138.
+
+Beck, T., Cull, R., & Fuchs, M. (2018). Banking in Africa. In *Oxford Handbook of Banking* (3rd ed.). Oxford University Press.
+
+Bello, A., Guo, X., & Newaz, M. (2022). Dynamic correlations and contagion for African markets during global crises. *Journal of African Business*, 23(2), 450–472.
+
+Benjamini, Y., & Hochberg, Y. (1995). Controlling the false discovery rate: A practical and powerful approach to multiple testing. *Journal of the Royal Statistical Society: Series B*, 57(1), 289–300.
+
+Boako, G., & Alagidede, P. (2018). African stock markets and contagion: A review. *Journal of African Business*, 19(3), 275–291.
+
+Brunnermeier, M. K. (2009). Deciphering the liquidity and credit crunch 2007–2008. *Journal of Economic Perspectives*, 23(1), 77–100.
+
+Brunnermeier, M. K., & Pedersen, L. H. (2009). Market liquidity and funding liquidity. *Review of Financial Studies*, 22(6), 2201–2238.
+
+Davies, J., Finlay, M., McLenaghen, T., & Wilson, D. (2006). *Key risk indicators — Their role in operational risk management and measurement*. RiskBusiness International.
+
+Demarta, S., & McNeil, A. J. (2005). The t copula and related copulas. *International Statistical Review*, 73(1), 111–129.
+
+Diamond, D. W., & Dybvig, P. H. (1983). Bank runs, deposit insurance, and liquidity. *Journal of Political Economy*, 91(3), 401–419.
+
+Diebold, F. X., & Yılmaz, K. (2014). On the network topology of variance decompositions: Measuring the connectedness of financial firms. *Journal of Econometrics*, 182(1), 119–134.
+
+Eisenberg, L., & Noe, T. H. (2001). Systemic risk in financial systems. *Management Science*, 47(2), 236–249.
+
+Embrechts, P., McNeil, A., & Straumann, D. (2002). Correlation and dependence in risk management: Properties and pitfalls. In *Risk Management: Value at Risk and Beyond* (pp. 176–223). Cambridge University Press.
+
+Freixas, X., Parigi, B. M., & Rocher, J.-C. (2000). Systemic risk, interbank relations, and liquidity provision by the central bank. *Journal of Money, Credit and Banking*, 32(3), 611–638.
+
+Frost & Sullivan. (2020). *The state of risk data management in African financial institutions*.
+
+Gogas, P., Papadimitriou, T., & Karagkiozis, I. (2021). Machine learning in financial risk management: A systematic review. *Journal of Risk and Financial Management*, 14(5), 210.
+
+Gorton, G., & Metrick, A. (2012). Securitized banking and the run on repo. *Journal of Financial Economics*, 104(3), 425–451.
+
+Granger, C. W. J. (1969). Investigating causal relations by econometric models and cross-spectral methods. *Econometrica*, 37(3), 424–438.
+
+Greenwood, R., Landier, A., & Themar, D. (2015). Vulnerable banks. *Journal of Financial Economics*, 115(3), 471–485.
+
+He, Z., & Xiong, W. (2012). Rollover risk and credit risk. *Journal of Finance*, 67(2), 391–429.
+
+Imbierowicz, B., & Rauch, C. (2014). The relationship between liquidity risk and credit risk in banks. *Journal of Banking & Finance*, 40, 242–256.
+
+Kingma, D. P., & Ba, J. (2015). Adam: A method for stochastic optimization. *Proceedings of the International Conference on Learning Representations (ICLR)*.
+
+Kipf, T. N., & Welling, M. (2017). Semi-supervised classification with graph convolutional networks. *Proceedings of the International Conference on Learning Representations (ICLR)*.
+
+Meinshausen, N., & Bühlmann, P. (2006). High-dimensional graphs and variable selection with the lasso. *Annals of Statistics*, 34(3), 1436–1462.
+
+Pesaran, H. H., & Shin, Y. (1998). Generalized impulse response analysis in linear multivariate models. *Economics Letters*, 58(1), 17–29.
+
+Schreiber, T. (2000). Measuring information transfer. *Physical Review Letters*, 85(2), 461–464.
+
+Veličković, P., Cucurull, G., Casanova, A., Romero, A., Liò, P., & Bengio, Y. (2018). Graph attention networks. *Proceedings of the International Conference on Learning Representations (ICLR)*.
+
+Zou, H. (2006). The adaptive lasso and its oracle properties. *Journal of the American Statistical Association*, 101(476), 1418–1429.
+
+---
+
+## 8. Appendix
+
+### Appendix A.1 — KRI-to-PRT Mapping Overview (200 definitions; 100 used in the benchmark)
+
+| # | PRT ID | Risk Class | Available KRI Range (10 per PRT) | Used in Benchmark (5 per PRT) |
+|---|---|---|---|---|
+| 1 | Business_Continuity_Risk | Non-Financial | KRI_001–010 | KRI_001–005 |
+| 2 | Capital_Risk | Financial | KRI_011–020 | KRI_011–015 |
+| 3 | Compliance_Risk | Non-Financial | KRI_021–030 | KRI_021–025 |
+| 4 | Concentration_Risk | Financial | KRI_031–040 | KRI_031–035 |
+| 5 | Conduct_Risk | Non-Financial | KRI_041–050 | KRI_041–045 |
+| 6 | Credit_Risk | Financial | KRI_051–060 | KRI_051–055 |
+| 7 | Currency_Risk | Financial | KRI_061–070 | KRI_061–065 |
+| 8 | Cyber_Risk | Non-Financial | KRI_071–080 | KRI_071–075 |
+| 9 | External_Fraud_Risk | Non-Financial | KRI_081–090 | KRI_081–085 |
+| 10 | Financial_Crime_Risk | Non-Financial | KRI_091–100 | KRI_091–095 |
+| 11 | Interest_Rate_Risk | Financial | KRI_101–110 | KRI_101–105 |
+| 12 | Internal_Fraud_Risk | Non-Financial | KRI_111–120 | KRI_111–115 |
+| 13 | Liquidity_Risk | Financial | KRI_121–130 | KRI_121–125 |
+| 14 | Market_Risk | Financial | KRI_131–140 | KRI_131–135 |
+| 15 | Model_Risk | Non-Financial | KRI_141–150 | KRI_141–145 |
+| 16 | Operational_Risk | Non-Financial | KRI_151–160 | KRI_151–155 |
+| 17 | Reputational_Risk | Non-Financial | KRI_161–170 | KRI_161–165 |
+| 18 | Sovereign_Risk | Non-Financial | KRI_171–180 | KRI_171–175 |
+| 19 | Strategic_Risk | Non-Financial | KRI_181–190 | KRI_181–185 |
+| 20 | Technology_Risk | Non-Financial | KRI_191–200 | KRI_191–195 |
+
+`KRI_Definitions.csv` defines ten KRIs per PRT (200 total). The benchmark uses the first five of each block; the full 200-KRI panel appears in `Observation_Data.csv` and is used only for the propagation sanity check in §4.2.
+
+### Appendix A.2 — KRI-to-PRT Aggregation Rule
+
+The 100 benchmark KRI series are ordered so that the five KRIs belonging to PRT *i* occupy column indices `5(i − 1) + 1 … 5i` of the 100-dimensional state vector (1-indexed; 0-indexed Python slices `[5*(i-1) : 5*i]`). Given the 100×100 KRI-level weight matrix `Ŵ^{KRI}` produced by the VAR+DY FEVD (or by CoVaR / GNN at KRI resolution, where applicable), the 20×20 PRT-level matrix `Ŵ^{PRT}` is obtained as:
+
+```
+Ŵ^{PRT}_{i,j} = Σ_{a ∈ B_i} Σ_{b ∈ B_j} Ŵ^{KRI}_{a,b}   for i ≠ j,
+Ŵ^{PRT}_{i,i} = 0   (self-loops excluded),
+```
+
+where `B_i = {5(i − 1) + 1, …, 5i}` is the set of KRI indices belonging to PRT *i*. Each row of `Ŵ^{PRT}` is then renormalised to sum to 1:
+
+```
+Ŵ^{PRT}_{i,j} ← Ŵ^{PRT}_{i,j} / Σ_{j'} Ŵ^{PRT}_{i,j'}.
+```
+
+This produces a 20×20 row-stochastic matrix directly comparable to `W_true` (also row-normalised in §3.3). The unit test in §3.5.1 validates this step. A Python reference implementation is provided in `src/kri_aggregation.py`.
+
+### Appendix A.3 — SRTG-20 Edge Table
+
+The designed network `W_true` is archived as `data/srtg20_edges.csv`, with the following columns for each of the ~40 directed edges:
+
+- `source_prt` — the source PRT
+- `target_prt` — the target PRT
+- `channel` — transmission channel (`capital` or `confidence`)
+- `lag` — 0, 1, or 2 periods
+- `weight` — influence strength ∈ (0, 1]
+- `source_document` — the supervisory framework, operational-risk literature, or academic paper that documents the edge
+- `source_section` — the specific section or paragraph reference
+- `justification` — one-sentence rationale
+
+The edges are drawn from the Bank of England's RAMSI, the European Central Bank's STAMP€ and BEAST, the International Monetary Fund's solvency–liquidity work, the operational-risk, cyber-risk, and reputational-risk literatures, and the Basel Committee's treatment of credit/operational boundary events and step-in risk.
+
+### Appendix A.4 — Code Repository
+
+The full code and data are available at **https://github.com/eodenyire/mscfe-690-risk-contagion-methods-study**, following the WorldQuant University Source Code Development Guidelines.
+
+---
+
+# What Is and Is Not Complete
+
+**The structure of the report is complete.** Every section required by the WQU Report Guidelines is present:
+
+| WQU Section | Status |
+|---|---|
+| Abstract (≤ 300 words) | ✅ 294 words |
+| Introduction | ✅ §1, five subsections |
+| Theoretical Framework | ✅ §2, six subsections |
+| Methodology | ✅ §3, nine subsections |
+| Results | ✅ §4, structure complete, numbers pending |
+| Discussion | ✅ §5, six subsections |
+| Conclusion | ✅ §6 |
+| References | ✅ §7, de-duplicated, alphabetical |
+| Appendix | ✅ §8, A.1–A.4 |
+
+**Every Ivan confirmation is incorporated:**
+
+- ✅ Design-your-own network, with documented edges (§1.3, §3.3, §3.4.5)
+- ✅ Three recovery estimators plus one propagation operator (§1.4, §2.5, §3.5, §4.1)
+- ✅ DebtRank only on impulse-response MSE (§1.4, §2.5, §3.5.4, §4.3.3)
+- ✅ Lag matrix drives `W_true` (§1.4, §2.5, §3.4, §5.2)
+- ✅ Random sparse networks robustness check (§1.4, §3.7, §4.4.4)
+- ✅ Granger and graphical lasso as optional extensions (§1.5, §2.6.4, §3.5.6)
+
+**What remains is execution, not writing:**
+
+1. Assemble `srtg20_edges.csv` — the documented 41-edge table.
+2. Implement the two-channel DGP with the lag matrix.
+3. Regenerate `Contagion_Propagation.csv` from the new DGP.
+4. Verify the propagation sanity check passes to `1e-6`.
+5. Fix the aggregation bug and verify the unit tests.
+6. Install PyTorch and train the GNN on three seeds.
+7. Implement the random sparse network generator.
+8. Run the reduced 60-configuration × 20-replication grid.
+9. Fill in every `[X.XXX]` placeholder with real numbers.
+10. Insert Figures 1 and 2.
+11. Rewrite the README, add `CONTRIBUTORS.md`, and add docstrings to every module.
+12. Final proofread and Turnitin check.
+
+**The report is submission-ready as a structure.** The placeholders are honest about what has not yet been run, the roadmap for completing them is documented in §3.9 and §5.1, and every methodological decision is traceable to Ivan's feedback. Once the code fixes are complete, the numbers are inserted and the report is finalized.

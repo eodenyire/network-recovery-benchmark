@@ -1,0 +1,231 @@
+# What Results to Expect from the Kiro Implementation
+
+This is a critical question, because **what you expect shapes what you will accept as correct.** If you expect positive results and get a null, you may misinterpret the null as failure. If you expect a null and get a positive, you may misinterpret the positive as fabricated. Below is a **calibrated expectation** for each stage of the execution, based on what the design can plausibly produce and what the search results, the DGP structure, and the estimator characteristics imply.
+
+---
+
+## Part 1 — The Five Outcomes Kiro Will Produce
+
+The Kiro implementation will produce **five categories of output**, and each has a **distinct expected outcome**. Some are deterministic (the code either runs or doesn't); some are empirical (the results depend on the DGP). Let me separate them.
+
+| # | Output | Deterministic or Empirical? | Expected Outcome |
+|---|---|---|---|
+| 1 | **Propagation sanity check** | Deterministic (given the DGP) | **Must pass to `1e-6`** — or the DGP is broken |
+| 2 | **Trivial baselines** (predict-all, random-k) | Deterministic (closed-form) | Predict-all F1 ≈ 0.13; Random-k F1 ≈ 0.13 ± 0.05 — **do not depend on the DGP** |
+| 3 | **VAR+DY recovery metrics** | Empirical | **Non-trivial but modest** — see §3 below |
+| 4 | **CoVaR recovery metrics** | Empirical | **Diagnostic — likely near-random** — see §4 below |
+| 5 | **GNN recovery metrics** | Empirical | **Data-dependent — either best or no better than VAR+DY** — see §5 below |
+
+And a **sixth** category:
+
+| # | Output | Expected Outcome |
+|---|---|---|
+| 6 | **Designed vs. random network comparison** | **Informative either way** — see §6 below |
+
+---
+
+## Part 2 — The Propagation Sanity Check (Deterministic)
+
+**What it must produce:** A DebtRank cascade on `W_true` that matches `Contagion_Propagation.csv` to `1e-6`.
+
+**What to expect:**
+
+- **If Kiro implements the DGP correctly**, the check passes on the first run or after minor debugging. The cascade will show:
+  - Technology_Risk +0.300 at Period 0
+  - Cyber_Risk and Operational_Risk propagating at Period 1
+  - Reputational, Liquidity, and External_Fraud propagating at Period 2
+  - Credit propagating at Period 3
+  - Monotone decay by Periods 5–12
+
+- **If Kiro implements the DGP incorrectly**, the check fails, and you will see one of these symptoms:
+  - **Cascade values all zero** — the lag matrix `Φ(W_true)` is not connected, or `λ` is zero.
+  - **Cascade explodes to infinity** — the spectral radius check did not pass; the stationarity guard is missing or broken.
+  - **Cascade does not decay** — the diagonal blocks of `Φ(W_true)` are wrong (persistence too high).
+  - **Cascade appears in the wrong PRTs** — the edges in `srtg20_edges.csv` are wrong or the block-mapping is inverted.
+
+**What this means for you:** The propagation sanity check is a **binary outcome**. Either it passes (Kiro's DGP is correct) or it fails (Kiro has a bug). There is no "partial success" here. **If it fails, do not proceed — debug the DGP before touching any estimator.**
+
+---
+
+## Part 3 — The Trivial Baselines (Deterministic)
+
+**What they must produce:** Predict-all and Random-k metrics on the same footing as the recovery estimators.
+
+**What to expect (closed-form):**
+
+- **Predict-all precision** = |E_true| / |E_possible| ≈ 40 / 400 ≈ **0.10** at density 2.
+- **Predict-all recall** = **1.0** (every true edge is predicted).
+- **Predict-all F1** = 2·0.10·1.0 / (0.10 + 1.0) ≈ **0.18**.
+- **Predict-all AUC-ROC** = **0.500** (no discriminative signal).
+- **Random-k precision** ≈ 0.10, **recall** ≈ 0.10, **F1** ≈ 0.10 ± 0.05, **AUC-ROC** ≈ 0.500 ± 0.03.
+
+**Important nuance:** Your paper's current §4.1 reports predict-all precision = **0.070** and F1 = **0.131**. That is **not** consistent with the 40/400 = 0.10 base rate. **It is the signature of a bug in the paper's earlier run** — specifically, the `size of axis is 400 but size of corresponding boolean axis is 10000` error and the subsequent collapse to a common size.
+
+**If Kiro produces predict-all precision ≈ 0.10 and F1 ≈ 0.18**, that is correct. **If Kiro reproduces predict-all precision ≈ 0.070 and F1 ≈ 0.131**, something in the harness still has the old bug. **That is the single most important check on the trivial baselines.**
+
+---
+
+## Part 4 — The VAR+DY Recovery Metrics (Empirical)
+
+**This is the most important and most uncertain result.** What to expect depends on three factors: the strength of the lag-matrix signal, the aggregation correctness, and the four-metric rule.
+
+### 4.1 What the signal looks like
+
+The two-channel DGP makes `W_true` drive both `Φ(W_true)` (lag structure) and `Σ` (contemporaneous structure). VAR+DY recovers the lag structure via the generalized FEVD. **The strength of the signal depends on:**
+
+- **The transmission parameter λ.** If λ is small (e.g., 0.1), the lag-matrix off-diagonal blocks are small, and VAR+DY has little to recover. If λ is larger (e.g., 0.3), the signal is stronger.
+- **The persistence φ.** Higher φ (e.g., 0.85) means the diagonal dominates, and the off-diagonal edges are relatively small. Lower φ (e.g., 0.6) means off-diagonal edges are relatively larger.
+- **The measurement noise σ.** At σ = 0.1 (the easiest cell), the noise is low and the signal is strong. At σ = 0.5 (the hardest cell), the noise can swamp the signal.
+
+### 4.2 My calibrated expectation
+
+**At the easiest grid cell (T = 250, σ = 0.1, ν = 5, density = 2, designed network):**
+
+- **AUC-ROC: likely 0.65–0.80.** VAR+DY should be well above 0.500 on the threshold-free metric. If it is 0.500, the aggregation or lag matrix is still broken.
+- **AUPRC: likely 0.15–0.30.** Above the 0.10 base rate, but not by a large margin. Sparse-network recovery is hard.
+- **F1@oracle: likely 0.20–0.35.** At the oracle threshold, VAR+DY should beat predict-all (0.18) by a small but real margin.
+- **F1@calibrated: likely 0.15–0.30.** Similar to F1@oracle, since the calibrated threshold should not be far from the oracle threshold for a well-behaved estimator.
+- **Edge-weight correlation: likely 0.20–0.45.** Positive correlation between recovered and true edge weights on the true edges, but not strong.
+- **DebtRank impulse-response MSE: likely 0.01–0.05.** Well below the reference cascade magnitude (0.300 at Period 0), so economically informative but not perfectly so.
+
+**The interpretation:** VAR+DY beats both trivial baselines on **three or four of the four metrics** — the usefulness criterion of §3.6. **The study has a positive result** that says "at realistic data volumes, VAR+DY recovers a non-trivial fraction of the planted network."
+
+### 4.3 What to expect as T and σ vary
+
+- **T = 250 → T = 50:** AUC-ROC drops from ~0.75 to ~0.55–0.60. F1@oracle drops from ~0.30 to ~0.15–0.20. **At T = 50, VAR+DY may be indistinguishable from predict-all** — the four-metric rule's usefulness criterion may not be met at that cell.
+- **σ = 0.1 → σ = 0.5:** AUC-ROC drops from ~0.75 to ~0.60–0.65. F1@oracle drops from ~0.30 to ~0.18–0.22. **At σ = 0.5, VAR+DY still beats predict-all** but is degraded.
+- **Density 2 → density 4:** The network is denser, so there are more true edges. Precision may rise (higher base rate, ~20% instead of ~10%), recall may fall (more edges to recover), F1 may be roughly constant or slightly higher.
+
+### 4.4 What would indicate a problem
+
+- **If VAR+DY AUC-ROC = 0.500 exactly** at every cell — the aggregation is still broken.
+- **If VAR+DY precision = 0.070 constant** — the aggregation bug from the earlier run is still present.
+- **If VAR+DY beats predict-all on AUC-ROC but not on F1@oracle** — the four-metric rule is working (the F1 collapse is real), but the signal is weak.
+- **If VAR+DY beats predict-all on all four metrics by large margins (>0.15 on each)** — either the DGP is too easy (λ too high, noise too low), or the estimator is being evaluated against itself (a leak in the design).
+
+---
+
+## Part 5 — The CoVaR Recovery Metrics (Empirical, Diagnostic)
+
+**What to expect:** CoVaR is a pairwise tail-dependence measure, not a graph-recovery estimator. It produces a fully dense 20×20 score matrix. When thresholded, the result is a set of edges that may or may not correspond to `W_true`'s edges.
+
+**At the easiest grid cell:**
+
+- **AUC-ROC: likely 0.50–0.60.** CoVaR's dense score matrix may weakly rank true edges above non-edges, but the signal is not expected to be strong.
+- **AUPRC: likely 0.10–0.15.** Near the base rate.
+- **F1@oracle: likely 0.15–0.22.** Weak.
+- **F1@calibrated: likely 0.10–0.18.** Weak.
+
+**The interpretation:** CoVaR's recovery metrics should be read as a **diagnostic**, not as a failure. The study's point about CoVaR is exactly that a dense pairwise tail-risk measure is not a graph-recovery estimator. **If CoVaR produces AUC-ROC ≈ 0.55 and F1@oracle ≈ 0.18, that is a faithful diagnostic** — CoVaR captures some tail-related information but does not recover the network structure.
+
+**What would indicate a problem:**
+
+- **If CoVaR AUC-ROC is near 0.500 with F1 near 0.13 at every cell** — the diagnostic is uninformative; either the tail signal is absent from the DGP or the CoVaR estimator is broken.
+- **If CoVaR AUC-ROC is above 0.75** — CoVaR is recovering the network better than VAR+DY, which would be surprising and would suggest either that the DGP's tail dependence dominates the lag structure (unlikely given §3.4) or that CoVaR's thresholded dense matrix is accidentally aligned with `W_true` (a coincidence that should be checked).
+
+---
+
+## Part 6 — The GNN Recovery Metrics (Empirical, Data-Dependent)
+
+**What to expect:** The GNN's performance depends on the amount of training data. At T = 250 (100 nodes × 5 features × 250 observations), the GNN has enough data to learn. At T = 50, it may overfit or underfit.
+
+**At the easiest grid cell (T = 250, σ = 0.1):**
+
+- **AUC-ROC: likely 0.60–0.85.** The GNN is a flexible learner; if the training signal is present, it can learn it. **This may be higher than VAR+DY** — the GNN can capture non-linear interactions that VAR+DY misses.
+- **AUPRC: likely 0.15–0.35.** Similar to VAR+DY, possibly slightly higher.
+- **F1@oracle: likely 0.20–0.40.** Similar to VAR+DY, possibly higher.
+- **F1@calibrated: likely 0.15–0.35.**
+- **Edge-weight correlation: likely 0.25–0.55.** Possibly higher than VAR+DY.
+
+**At harder grid cells (T = 50, σ = 0.5):**
+
+- **AUC-ROC: likely 0.50–0.65.** The GNN may overfit and produce near-random ranking.
+- **F1@oracle: likely 0.10–0.20.** Near or below the trivial baselines.
+- **The GNN may underperform VAR+DY** at these cells — this is the expected trade-off documented in §3.5.3 ("data-hungry, may overfit on noisy, short-horizon time series").
+
+**What this means for the study's narrative:** The GNN's expected trade-off — **best at high T and low σ, worst at low T and high σ** — is exactly the finding the study is designed to produce. **If Kiro's results show this trade-off, the study's central claim about estimator characteristics is supported.**
+
+**What would indicate a problem:**
+
+- **If the GNN AUC-ROC is 0.500 at every cell** — the model is not training (loss not decreasing, or PyTorch not installed).
+- **If the GNN AUC-ROC is above 0.95 at every cell** — the model is overfitting to the training split (leak in the train/test split, or the features are too informative).
+- **If the GNN and VAR+DY produce identical results** — the GNN may not be training (weights initialized at zero, or outputs not differentiable).
+
+---
+
+## Part 7 — The Designed vs. Random Robustness Check (Informative Either Way)
+
+**What to expect:** The comparison between designed and random networks at the same density tells you whether the documented topology carries information the estimators can exploit.
+
+**Three plausible outcomes, each informative:**
+
+**Outcome A — Designed ≈ Random.** If VAR+DY's AUC-ROC on the designed network is roughly the same as on the random networks (e.g., 0.75 vs. 0.73), then the recovery is driven by the **density and edge-count structure**, not by the specific documented topology. **The design choices in `srtg20_edges.csv` do not materially affect the results.** This supports the robustness claim in §3.7.4.
+
+**Outcome B — Designed > Random.** If VAR+DY's AUC-ROC on the designed network is substantially higher than on random networks (e.g., 0.75 vs. 0.55), then the documented topology carries information that random networks do not — likely because the documented edges correspond to **stronger or more persistent transmission** (e.g., capital channel with lag 1, versus random edges that may be weak or have wrong lags). **The documentation is doing real work.** This is a stronger positive result for the study's claim that a designed, documented network is worth having.
+
+**Outcome C — Random > Designed.** This would be surprising and would suggest a bug — for example, the designed network's edges may be systematically in the wrong direction, or the lag matrix `Φ(W_true)` may be constructed such that the designed edges have lower weight than the random edges.
+
+**My calibrated expectation:** **Outcome A or Outcome B, roughly equally likely.** The designed network has documented edges, but at T = 250, the random networks have the same density and the same number of true edges — so the estimators may not distinguish them. If the designed edges are systematically stronger (capital channel, lag 1), Outcome B is more likely.
+
+---
+
+## Part 8 — The Six Things That Would Indicate a Problem
+
+Across all outputs, six symptoms would indicate that Kiro has a bug rather than a legitimate result:
+
+1. **Propagation sanity check fails** — do not proceed.
+2. **Predict-all precision = 0.070** (instead of ~0.10) — the aggregation or the harness has the old bug.
+3. **VAR+DY AUC-ROC = 0.500 at every cell** — the DGP's lag matrix is not driving VAR+DY's signal.
+4. **CoVaR AUC-ROC > 0.75 at any cell** — CoVaR is beating VAR+DY, which should not happen for a pairwise tail-risk measure on a lag-driven network.
+5. **GNN AUC-ROC = 0.500 at every cell** — the model is not training.
+6. **All three estimators produce identical results** — the estimators are not actually being run, or they are being evaluated against `W_true` instead of `Ŵ_est`.
+
+**If any of these six symptoms appears, stop and debug.** Do not paper over the symptom by writing prose that hides it. The honest diagnostic is more valuable than a fabricated positive result.
+
+---
+
+## Part 9 — The Headline Findings You Should Expect
+
+**If Kiro executes the design correctly, the study's expected findings are:**
+
+1. **VAR+DY beats both trivial baselines** on at least three of four metrics at the easiest grid cell. It is a **useful recovery estimator**, but not a spectacular one — AUC-ROC in the 0.65–0.80 range, F1@oracle in the 0.20–0.35 range.
+
+2. **VAR+DY degrades predictably** as T falls and σ rises. At T = 50 or σ = 0.5, it may not meet the usefulness criterion. This degradation is the study's central empirical contribution.
+
+3. **CoVaR is a diagnostic, not a recovery estimator.** Its recovery metrics hover near the trivial baselines, confirming that a dense pairwise tail-risk measure is not a sparse graph estimator.
+
+4. **The GNN is data-hungry.** At T = 250 and σ = 0.1, it may rival or beat VAR+DY. At T = 50 or σ = 0.5, it underperforms. The T-degradation curve is steeper for the GNN than for VAR+DY.
+
+5. **DebtRank's impulse-response MSE is lowest for the estimator with the highest AUC-ROC.** This confirms that recovered graphs with better edge-level accuracy also produce more economically informative cascades.
+
+6. **The designed vs. random robustness check** either confirms the design's contribution (Outcome B) or shows the results are robust to design choices (Outcome A). **Both outcomes are publishable.**
+
+**The study's central claim** — that recovery accuracy degrades with data scarcity, and that no single estimator dominates across all conditions — is likely to be supported by the results. The specific rankings will depend on the DGP parameters (λ, φ, ρ), but the qualitative shape (VAR+DY > CoVaR, GNN best at high T, all degrade as T falls) is expected.
+
+---
+
+## Part 10 — The One Thing That Would Indicate a Successful Study
+
+**If VAR+DY produces non-trivial recovery at T = 250 (AUC-ROC > 0.65) and degrades to near-random at T = 50 (AUC-ROC ≈ 0.55), the study has succeeded.**
+
+That is the finding the study is designed to produce — a documented, quantified map of **when** recovery works and **when** it does not. The paper's central claim — that African banks with short histories cannot rely on graph-recovery methods, and that a practitioner needs to know how much data is enough — is supported by that specific shape.
+
+**If VAR+DY is trivially good at every cell, the DGP is too easy** (the study measures nothing).
+
+**If VAR+DY is trivially bad at every cell, either the DGP's lag matrix is broken (a bug) or the study has a genuine negative finding** (which is publishable, but requires the diagnostic to be airtight).
+
+**The goldilocks outcome — non-trivial at T = 250, degraded at T = 50 — is the study working as designed.** Expect that, and interpret whatever Kiro produces against it.
+
+---
+
+## Bottom Line
+
+**Kiro will produce five categories of output.** The propagation sanity check is binary and must pass. The trivial baselines are closed-form and must reproduce precision ≈ 0.10 (not 0.070). The three recovery estimators will produce empirical results that fall into specific expected ranges — VAR+DY with AUC-ROC 0.65–0.80 at the easiest cell, CoVaR near-random (diagnostic only), GNN data-dependent. The designed vs. random comparison is informative either way.
+
+**The expected headline finding is:** VAR+DY beats trivial baselines at T = 250 but degrades to near-baseline at T = 50. The GNN has a steeper degradation curve. CoVaR is a diagnostic. DebtRank's impulse-response MSE is correlated with AUC-ROC.
+
+**If any of the six symptoms in Part 8 appears, stop and debug.** Do not paper over a bug with prose.
+
+**If the results fall in the expected ranges, the study is a success** — a documented, quantified map of estimator performance under data scarcity, which is exactly what a methods study is designed to produce.
+
+**The first output Kiro produces is the propagation sanity check.** If that passes to `1e-6`, the DGP is correct, and everything else follows. If it fails, nothing else matters until it passes. **That is the first thing to verify when Kiro reports back.**

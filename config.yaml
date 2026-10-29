@@ -1,0 +1,149 @@
+# SRTG-20 Capstone Configuration
+# Synthetic Risk Transmission Graph: Methods Study on Network Recovery
+# M6 Reduced Grid Configuration
+
+# Study metadata
+study:
+  name: "SRTG-20: Synthetic Risk Transmission Graph Recovery Benchmark"
+  version: "M6-Full"
+  checkpoint_dir: "results/checkpoints"
+
+# Experimental grid parameters
+experimental_grid:
+  time_steps: [50, 100, 150, 200, 250]
+  noise_levels: [0.1, 0.3, 0.5]
+  tail_dependence_nu: [3, 5, 10]
+  network_density: [2, 4]
+  network_sources: [designed, random]
+  replications: 100
+  total_configurations: 180
+  total_experiments: 18000
+
+# Random seeds for reproducibility
+seeds:
+  numpy_seed: 42
+  torch_seed: 42
+  network_seed: 2024
+  data_seed: 2025
+
+# Data generation parameters
+dgp:
+  num_prts: 20
+  kris_per_prt: 5
+  total_kris: 100
+  
+  network:
+    source_file: "data/srtg20_edges.csv"
+    num_edges: 41
+    density: 0.1025
+    directed: true
+    weighted: true
+  
+  t_copula:
+    degrees_of_freedom: 5
+    tail_dependence: 0.3
+  
+  var:
+    lag_order: 1
+    ar_coefficients_min: 0.6
+    ar_coefficients_max: 0.85
+    contemporaneous_contagion: 0.4
+  
+  marginal:
+    lower_bound: 10
+    upper_bound: 40
+  
+  shock:
+    initial_magnitude: 0.30
+    convergence_threshold: 1e-6
+    max_periods: 13
+
+# Data file locations
+data:
+  prt_definitions: "data/PRT_Definitions_v2.csv"
+  kri_definitions: "data/KRI_Definitions_v2.csv"
+  edge_definitions: "data/srtg20_edges.csv"
+  synthetic_data_dir: "results/synthetic_data"
+  results_dir: "results"
+  figures_dir: "results/figures"
+  logs_dir: "results/logs"
+
+# Recovery methods configuration
+recovery_methods:
+  var_diebold_yilmaz:
+    enabled: true
+    lag_order: 1
+    forecast_horizon: 10
+    threshold_optimization: true
+    threshold_range: [0.0, 1.0]
+    threshold_steps: 50
+  
+  covar:
+    enabled: true
+    quantile: 0.05
+    standardize: true
+    threshold_optimization: true
+  
+  gnn_graph_attention:
+    enabled: true
+    hidden_dim: 64
+    num_heads: 2
+    num_layers: 2
+    dropout: 0.1
+    learning_rate: 0.001
+    epochs: 100
+    sparsity_weight: 0.01
+    seed: 42
+  
+  debtrank:
+    enabled: true
+    is_recovery_method: false
+    alpha: 0.5
+    max_iterations: 10
+    convergence_threshold: 1e-6
+
+# Evaluation metrics
+evaluation:
+  binarization:
+    method: "optimal_threshold"
+    threshold_range: [0.0, 1.0]
+    threshold_steps: 50
+  
+  metrics:
+    - precision
+    - recall
+    - f1_score
+    - auc_roc
+    - edge_weight_correlation
+    - impulse_response_mse
+  
+  aggregation:
+    statistics: [mean, std, min, max, p25, p50, p75]
+    monte_carlo_runs: 20
+
+# Output configuration
+output:
+  results_dir: "results"
+  figures_dir: "results/figures"
+  logs_dir: "results/logs"
+  checkpoint_dir: "results/checkpoints"
+  save_format: [json, csv]
+  json_output: "results/benchmark_results.json"
+  csv_output: "results/benchmark_summary.csv"
+  log_file: "results/logs/experiment.log"
+  log_level: "INFO"
+
+# Compute resources
+compute:
+  num_workers: 4
+  use_gpu: false
+  device: "cpu"
+  memory_limit_gb: 8
+  timeout_seconds: 3600
+
+# Validation settings
+validation:
+  check_network_connectivity: true
+  check_copula_positive_definite: true
+  save_checkpoints: true
+  resume_from_checkpoint: true

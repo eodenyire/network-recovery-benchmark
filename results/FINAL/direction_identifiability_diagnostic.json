@@ -1,0 +1,11 @@
+{
+  "config": {
+    "time_steps": 250,
+    "noise_level": 0.1,
+    "network_density": 2,
+    "t_df": 5.0,
+    "num_replications": 3
+  },
+  "direction_recovery_ratio": 0.15384615384615385,
+  "direction_identifiable": false
+}
