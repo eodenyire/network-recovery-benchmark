@@ -48,8 +48,8 @@ This avoids circularity (planting-then-discovering) by treating it as a **method
 
 ```bash
 # Clone repository
-git clone https://github.com/WorldQuantCapstone/SRTG-20.git
-cd SRTG-20
+git clone https://github.com/eodenyire/network-recovery-benchmark/
+cd network-recovery-benchmark/
 
 # Create virtual environment (recommended)
 python -m venv venv
