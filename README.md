@@ -466,7 +466,8 @@ MIT License. See `LICENSE` file for details.
 ## Contact & Attribution
 
 **Project Team:**
-- **Emmanuel Odenyire Anyira** — Lead Researcher & Implementation
+- **Emmanuel Odenyire Anyira** — Student
+- **Francis Dzikpe** — Student
 - **Supervisor:** Iván Blanco (World Quant University)
 
 **Institution:** World Quant University | MScFE Program  
