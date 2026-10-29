@@ -1,9 +1,5 @@
 # SRTG-20: Synthetic Risk Transmission Graph Recovery Benchmark
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
-[![Status: Capstone](https://img.shields.io/badge/Status-Capstone%20Submission-brightgreen)](https://wqu.edu)
-
 **World Quant University | MScFE Capstone Project | Group 17869**  
 **Track:** Practical Track, Risk Management  
 **Deadline:** November 3, 2026
@@ -479,24 +475,6 @@ MIT License. See `LICENSE` file for details.
 
 ---
 
-## Status
-
-**Status:** ✅ **Submission Ready** (Oct 2026)
-
-- [x] Data generation verified
-- [x] Recovery methods implemented and benchmarked
-- [x] Full 9,000-experiment benchmark completed
-- [x] Results visualized and summarized
-- [x] Code documented and tested
-- [x] Reproducibility verified
-- [x] Submission-ready structure
-
-**Next steps:** Deploy to GitHub, submit to WQU capstone evaluation.
-
----
-
 *Last Updated: October 29, 2026*  
 *Version: 1.0 (Production Ready)*
-#   n e t w o r k - r e c o v e r y - b e n c h m a r k  
- 
-# network-recovery-benchmark
+#
