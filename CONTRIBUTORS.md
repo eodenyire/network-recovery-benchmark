@@ -7,8 +7,8 @@
 
 ## Core Team
 
-### Emmanuel Odenyire Anyira
-- **Role:** Lead Researcher & Implementation
+### Emmanuel Odenyire Anyira/Francis Dzikpe
+- **Roles:** Lead Researchers & Implementation
 - **Responsibilities:**
   - Study design and methodology development
   - Network architecture (srtg20_edges.csv)
