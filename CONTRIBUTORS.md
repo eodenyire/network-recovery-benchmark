@@ -60,17 +60,17 @@
 
 | Component | Contributor | Status |
 |-----------|-------------|--------|
-| Network design (41 edges) | Emmanuel Anyira | ✅ Complete |
-| DGP implementation | Emmanuel Anyira | In Progress |
-| VAR+DY recovery | Emmanuel Anyira | In Progress |
-| CoVaR recovery | Emmanuel Anyira | In Progress |
-| GNN training & recovery | Emmanuel Anyira | In Progress |
+| Network design (41 edges) | Emmanuel/Francis | ✅ Complete |
+| DGP implementation | Emmanuel/Francis | In Progress |
+| VAR+DY recovery | Emmanuel/Francis | In Progress |
+| CoVaR recovery | Francis Dzikpe | In Progress |
+| GNN training & recovery | Francis/Emmanuel | In Progress |
 | DebtRank propagation | Emmanuel Anyira | In Progress |
 | Evaluation metrics | Emmanuel Anyira | In Progress |
-| Experiment orchestration | Emmanuel Anyira | In Progress |
+| Experiment orchestration | Emmanuel/Francis | In Progress |
 | Results aggregation | Emmanuel Anyira | In Progress |
 | Visualization & figures | Emmanuel Anyira | In Progress |
-| Report writing | Emmanuel Anyira | In Progress |
+| Report writing | Emmanuel/Francis | In Progress |
 | Peer review & feedback | Iván Blanco | Ongoing |
 
 ---
