@@ -434,7 +434,7 @@ If you use this work, please cite:
 
 ```bibtex
 @thesis{anyira2026srtg,
-  author = {Anyira, Emmanuel Odenyire},
+  authors = {Anyira, Emmanuel Odenyire,Francis Dzikpe},
   title = {SRTG-20: Synthetic Risk Transmission Graph Recovery Benchmark},
   school = {World Quant University},
   year = {2026},
